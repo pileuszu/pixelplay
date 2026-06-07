@@ -126,10 +126,51 @@ class MouseClient:
         return abs_x, abs_y
 
 
+# ─── 스트림 스레드 (항상 최신 프레임 유지) ─────────────────────
+class StreamThread(threading.Thread):
+    """
+    MJPEG 네트워크 스트림에서 항상 최신 프레임만 유지하는 백그라운드 스레드.
+    OpenCV cap.read() 버퍼 상충 문제 해결.
+    """
+    def __init__(self, url):
+        super().__init__(daemon=True)
+        self.url = url
+        self._frame = None
+        self._lock  = threading.Lock()
+        self._stop  = threading.Event()
+        self.ok     = False
+
+    def run(self):
+        cap = cv2.VideoCapture(self.url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.ok = cap.isOpened()
+        if not self.ok:
+            print(f"[!] 스트림 연결 실패: {self.url}")
+            return
+        print(f"[+] 스트림 스레드 시작: {self.url}")
+        while not self._stop.is_set():
+            ret, frame = cap.read()
+            if ret:
+                with self._lock:
+                    self._frame = frame
+            else:
+                time.sleep(0.05)
+        cap.release()
+
+    def get_latest(self):
+        """최신 프레임 반환 (없으면 None)"""
+        with self._lock:
+            return self._frame.copy() if self._frame is not None else None
+
+    def stop(self):
+        self._stop.set()
+
+
 # ─── OCR 자동 감지 규칙 ──────────────────────────────────────────────
 # {찾을 텍스트: {모드: (region_key, bbox_기준_x비율_오프셋, y오프셋, w, h)}}
 # 오프셋은 감지된 텍스트 박스의 (x1, y1) 기준 (게임창 비율 단위)
 OCR_RULES = {
+
     '세트덱': {
         'batter_p1':  ('setdeck_area',   0.28, -0.005, 0.12, 0.05),
         'pitcher_p1': ('setdeck_area',   0.28, -0.005, 0.12, 0.05),
@@ -233,9 +274,10 @@ def draw_text_pil(img, lines_with_info, padding=4):
 class CalibrationGUI:
     def __init__(self, stream_url):
         self.stream_url = stream_url
-        self.cap = None
-        self.frame = None
-        self.live = False
+        self.stream = StreamThread(stream_url)
+        self.stream.start()
+        self.frame  = None
+        self.live   = True   # 기본 라이브 ON
 
         self.regions = {
             'batter_p1':  dict(BATTER_P1),  'batter_p2':  dict(BATTER_P2),
@@ -290,18 +332,14 @@ class CalibrationGUI:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"[+] 저장됨: {OVERRIDE_PATH}")
 
-    # ── 스트림 ────────────────────────────────────────────────────────
-    def _connect(self):
-        self.cap = cv2.VideoCapture(self.stream_url)
-        ok = self.cap.isOpened()
-        print(f"[{'+'if ok else'!'}] 스트림 {'연결' if ok else '실패'}: {self.stream_url}")
-        return ok
-
+    # ── 스트림 ────────────────────────────────────────────────
     def grab_frame(self):
-        if not (self.cap and self.cap.isOpened()): return False
-        ret, frame = self.cap.read()
-        if ret: self.frame = frame.copy()
-        return ret
+        f = self.stream.get_latest()
+        if f is not None:
+            self.frame = f
+            return True
+        return False
+
 
     # ── 히트 테스트 ───────────────────────────────────────────────────
     def _corner_hit(self, mx, my, x1, y1, x2, y2):
@@ -539,17 +577,27 @@ class CalibrationGUI:
         img = draw_text_pil(img, text_items)
         return img
 
-    # ── 메인 루프 ─────────────────────────────────────────────────────
+    # ── 메인 루프 ────────────────────────────────────────────────
     def run(self):
-        if not self._connect(): return
+        # 스레드 시작 후 첫 프레임 기다리기
+        print("[*] 스트림 연결 대기...")
+        for _ in range(30):
+            if self.stream.get_latest() is not None:
+                break
+            time.sleep(0.1)
+        self.grab_frame()
+
+        if not self.stream.ok:
+            print("[!] 스트림 연결 실패 - 종료")
+            return
+
 
         win = 'CPBV Calibration GUI'
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win, STREAM_WIDTH, STREAM_HEIGHT)
         cv2.setMouseCallback(win, self.on_mouse)
 
-        self.grab_frame()
-        print("[*] GUI 시작  |  드래그: 영역 편집  |  A: OCR 자동감지  |  S: 저장")
+        print("[*] GUI 시작  |  드래그: 영역 편집  |  A: OCR 자동감지  |  S: 저장  |  L: 라이브 토글")
 
         while True:
             if self.live: self.grab_frame()
@@ -586,7 +634,7 @@ class CalibrationGUI:
             elif key == ord('c'):
                 self.ocr_boxes = []; self.ocr_status = ''; self.last_click_label = ''
 
-        self.cap.release()
+        self.stream.stop()
         cv2.destroyAllWindows()
         print("[*] 종료")
 
