@@ -848,22 +848,16 @@ class CalibrationGUI:
                                     cur_zone, seg_start = z, xi
                             if cur_zone != 0:
                                 segments.append((cur_zone, seg_start, bw))
-                            # 전체 채움 폭 계산 + 노이즈 필터(3% 미만 제거) + 구간 비율 (합=1.0)
+                            # 노이즈 필터(3% 미만 제거) + 구간별 픽셀 수 저장
                             total_filled = sum(e - s for _, s, e in segments)
                             segments = [(z, s, e) for z, s, e in segments
                                         if (e - s) / max(total_filled, 1) >= 0.03]
-                            total_filled = sum(e - s for _, s, e in segments)
                             seg_count = len(segments)
-                            if seg_count > 0:
-                                raw_r = [(e - s) / total_filled for _, s, e in segments]
-                                ratios = [round(r, 3) for r in raw_r[:-1]]
-                                ratios.append(round(1.0 - sum(ratios), 3))  # 합=1.0 보장
-                            else:
-                                ratios = []
+                            px_widths = [e - s for _, s, e in segments]
                             role = {5: 'CP', 4: 'RP', 3: 'SP'}.get(seg_count, '?')
-                            ratios_str = ' '.join(str(r) for r in ratios)
-                            self.extract_results['stamina_bar_detail'] = f"{seg_count}:{ratios_str}"
-                            print(f"  {'stamina_bar_detail':<22} : {seg_count}구간({role})  비율=[{ratios_str}]")
+                            px_str = ' '.join(str(w) for w in px_widths)
+                            self.extract_results['stamina_bar_detail'] = f"{seg_count}:{px_str}"
+                            print(f"  {'stamina_bar_detail':<22} : {seg_count}구간({role})  px=[{px_str}]")
 
                     parea = regions.get('pitches_area')
                     if parea:
