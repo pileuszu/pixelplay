@@ -12,6 +12,23 @@ WINDOW_BOTTOM = 1459
 WINDOW_WIDTH  = WINDOW_RIGHT  - WINDOW_LEFT   # 736
 WINDOW_HEIGHT = WINDOW_BOTTOM - WINDOW_TOP    # 1319
 
+# ─── 스트림 설정 ─────────────────────────────────────────────────────
+# OBS 출력 해상도 (ffmpeg 스트림 해상도)
+STREAM_WIDTH  = 1280
+STREAM_HEIGHT = 720
+
+# 스트림 내 게임창 위치 (OBS 중앙 맞춤 기준, 자동 계산)
+# 게임창 비율: 736/1319 = 0.558
+# 720px 높이에 맞추면: 너비 = 720 * (736/1319) ≈ 402px
+# 좌여백: (1280 - 402) / 2 ≈ 439px
+_game_h = STREAM_HEIGHT
+_game_w = int(_game_h * WINDOW_WIDTH / WINDOW_HEIGHT)
+_game_x = (STREAM_WIDTH - _game_w) // 2
+STREAM_GAME_X1 = _game_x          # ≈ 439
+STREAM_GAME_Y1 = 0
+STREAM_GAME_X2 = _game_x + _game_w  # ≈ 841
+STREAM_GAME_Y2 = STREAM_HEIGHT     # 720
+
 # ─── 네트워크 설정 ────────────────────────────────────────────────────
 STREAM_URL  = "http://100.118.216.59:8080/video"
 MOUSE_HOST  = "100.118.216.59"
@@ -105,3 +122,20 @@ PITCHER_P2 = {
 import os
 TEAM_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "team_templates")
 TEAMS = ["두산", "삼성", "한화", "롯데", "KIA", "키움", "SSG", "LG", "NC", "KT"]
+
+# ─── 캘리브레이션 오버라이드 자동 로드 ───────────────────────────────
+# calibrate_gui.py에서 S키로 저장하면 config_override.json에 기록됨
+# 이후 import 시 자동으로 반영됨
+import json as _json
+_override_path = os.path.join(os.path.dirname(__file__), 'config_override.json')
+if os.path.exists(_override_path):
+    with open(_override_path, encoding='utf-8') as _f:
+        _ovr = _json.load(_f)
+    _mode_map = {
+        'batter_p1': BATTER_P1, 'batter_p2': BATTER_P2, 'batter_p3': BATTER_P3,
+        'pitcher_p1': PITCHER_P1, 'pitcher_p2': PITCHER_P2, 'pitcher_p3': PITCHER_P3,
+    }
+    for _mode, _rgs in _ovr.get('regions', {}).items():
+        if _mode in _mode_map:
+            _mode_map[_mode].update({k: tuple(v) for k, v in _rgs.items()})
+    UI.update({k: tuple(v) for k, v in _ovr.get('click_pts', {}).items()})
