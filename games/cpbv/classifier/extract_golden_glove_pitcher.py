@@ -242,7 +242,7 @@ def _load_grade_templates():
             grade = stem.rsplit('_', 1)[-1]  # 'PITCH1_A' → 'A'
         else:
             grade = stem
-        if not grade or grade[0] not in 'SABCDE':
+        if not grade or grade[0] not in 'ABCD':
             continue
         grade = grade[0]
         fpath = os.path.join(GRADE_TEMPLATES_DIR, fname)

@@ -770,8 +770,8 @@ class CalibrationGUI:
             crop = self.frame[y1c:y2c, x1c:x2c]
             slot = sel_key.replace('_grade', '')  # 'pitch3'
 
-            grade_input = input(f"[G] {sel_key} 등급 (S/A/B/C/D/E): ").strip().upper()
-            if not grade_input or grade_input not in 'SABCDE' or len(grade_input) != 1:
+            grade_input = input(f"[G] {sel_key} 등급 (A/B/C/D): ").strip().upper()
+            if not grade_input or grade_input not in 'ABCD' or len(grade_input) != 1:
                 print("[!] 취소 또는 잘못된 입력"); return
 
             fname = f"{slot}_{grade_input}.png"
