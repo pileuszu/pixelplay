@@ -393,6 +393,7 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
     time.sleep(5)
 
     players = []
+    seen_names = set()   # 중복 감지용
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
 
     idx = 0
@@ -406,6 +407,11 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
         p1 = extract_pitcher_p1(frame)
         print(f"    이름={p1['name']}  전체={p1['overall']}  포지션={p1['position']}  팀={p1['team']}")
         print(f"    능력치={p1['stats']}")
+
+        # 중복 감지 (count=0일 때만 자동 종료)
+        if count == 0 and p1['name'] and p1['name'] in seen_names:
+            print(f"\n[*] 중복 감지: '{p1['name']}' → 전체 순환 완료, 종료")
+            break
 
         # P3으로 이동 (next_page × 2)
         if mouse.connected:
@@ -433,6 +439,8 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             'timestamp': datetime.now().isoformat(timespec='seconds'),
         }
         players.append(record)
+        if p1['name']:
+            seen_names.add(p1['name'])
 
         # 중간 저장
         with open(out_path, 'w', encoding='utf-8') as f:
