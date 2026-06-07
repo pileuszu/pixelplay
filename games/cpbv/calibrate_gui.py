@@ -632,8 +632,14 @@ class CalibrationGUI:
         crop = self.frame[y1c:y2c, x1c:x2c]
         os.makedirs(TEAM_TEMPLATES_DIR, exist_ok=True)
         path = os.path.join(TEAM_TEMPLATES_DIR, f"{team_name}.png")
-        cv2.imwrite(path, crop)
-        print(f"[+] 팀 로고 저장: {path}  ({crop.shape[1]}×{crop.shape[0]}px)")
+        try:
+            # cv2.imwrite 는 Windows 한글 경로 실패 → PIL 사용
+            from PIL import Image as _Img
+            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            _Img.fromarray(rgb).save(path)
+            print(f"[+] 팀 로고 저장: {path}  ({crop.shape[1]}×{crop.shape[0]}px)")
+        except Exception as e:
+            print(f"[!] 로고 저장 실패: {e}")
 
     def start_ocr_extract(self):
         """현재 모드의 각 영역 크롭 → OCR → 터미널+GUI 표시"""
