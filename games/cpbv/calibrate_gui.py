@@ -848,13 +848,18 @@ class CalibrationGUI:
                                     cur_zone, seg_start = z, xi
                             if cur_zone != 0:
                                 segments.append((cur_zone, seg_start, bw))
-                            # 전체 채움 폭 계산 + 노이즈 필터(3% 미만 제거) + 구간 비율
+                            # 전체 채움 폭 계산 + 노이즈 필터(3% 미만 제거) + 구간 비율 (합=1.0)
                             total_filled = sum(e - s for _, s, e in segments)
                             segments = [(z, s, e) for z, s, e in segments
                                         if (e - s) / max(total_filled, 1) >= 0.03]
                             total_filled = sum(e - s for _, s, e in segments)
                             seg_count = len(segments)
-                            ratios = [round((e - s) / max(total_filled, 1), 3) for _, s, e in segments]
+                            if seg_count > 0:
+                                raw_r = [(e - s) / total_filled for _, s, e in segments]
+                                ratios = [round(r, 3) for r in raw_r[:-1]]
+                                ratios.append(round(1.0 - sum(ratios), 3))  # 합=1.0 보장
+                            else:
+                                ratios = []
                             role = {5: 'CP', 4: 'RP', 3: 'SP'}.get(seg_count, '?')
                             ratios_str = ' '.join(str(r) for r in ratios)
                             self.extract_results['stamina_bar_detail'] = f"{seg_count}:{ratios_str}"
@@ -869,75 +874,51 @@ class CalibrationGUI:
                         ph, pw2 = pcrop.shape[:2]
 
                         if pw2 > 0 and ph > 0:
-                            # 수평 구분선 자동 감지: 평균 밝기가 낮은 행 = 셀 경계
-                            row_brightness = [
-                                float(pcrop[ry, :, :].mean()) for ry in range(ph)
-                            ]
-                            # 밝기 임계: 전체 평균의 60% 이하 = 어두운 구분선
-                            avg_b = sum(row_brightness) / max(len(row_brightness), 1)
-                            threshold = avg_b * 0.6
-                            # 구분선 y 위치 찾기 (연속된 어두운 행 중 가운데)
-                            sep_ys = []
-                            in_sep = False
-                            seg_start = 0
-                            for ry, b in enumerate(row_brightness):
-                                if b < threshold and not in_sep:
-                                    in_sep = True; seg_start = ry
-                                elif b >= threshold and in_sep:
-                                    in_sep = False
-                                    sep_ys.append((seg_start + ry) // 2)
-                            # 행 범위 생성
-                            row_bounds = []
-                            prev = 0
-                            for sy in sep_ys:
-                                if sy - prev > ph * 0.1:  # 최소 행 높이 10%
-                                    row_bounds.append((prev, sy))
-                                    prev = sy
-                            row_bounds.append((prev, ph))
+                            N_ROWS, N_COLS = 3, 2
+                            NAME_W  = 0.75   # 셀 내 이름 영역 너비 비율 (좌측)
+                            BADGE_X = 0.82   # 배지 시작 x 비율 (우측)
 
                             def _grade_from_badge(badge_bgr):
-                                """배지 이미지 중심 픽셀 HSV → 등급 문자"""
-                                if badge_bgr.size == 0:
-                                    return None
-                                bh, bw = badge_bgr.shape[:2]
-                                cx, cy = bw // 2, bh // 2
-                                hsv = cv2.cvtColor(badge_bgr, cv2.COLOR_BGR2HSV)
-                                h, s, v = int(hsv[cy, cx, 0]), int(hsv[cy, cx, 1]), int(hsv[cy, cx, 2])
-                                if v < 50 or s < 40:   return 'D'   # 어두움/회색
-                                if h < 12 or h > 165:  return 'A'   # 빨강
-                                if h < 35:             return 'S'   # 금색/노랑
-                                if h < 85:             return 'B'   # 초록
-                                return 'C'                           # 파랑/시안
+                                if badge_bgr.size == 0: return None
+                                bh2, bw2 = badge_bgr.shape[:2]
+                                hsv2 = cv2.cvtColor(badge_bgr, cv2.COLOR_BGR2HSV)
+                                cy2, cx2 = bh2 // 2, bw2 // 2
+                                h2, s2, v2 = (int(hsv2[cy2, cx2, 0]),
+                                              int(hsv2[cy2, cx2, 1]),
+                                              int(hsv2[cy2, cx2, 2]))
+                                if v2 < 50 or s2 < 40: return None  # 빈 슬롯
+                                if h2 < 12 or h2 > 165: return 'A'  # 빨강
+                                if h2 < 35:             return 'S'  # 금색
+                                if h2 < 85:             return 'B'  # 초록
+                                return 'C'                           # 파랑
 
-                            for row_y1, row_y2 in row_bounds:
-                                if row_y2 - row_y1 < 8:
+                            # 슬롯 순서: (row, col), 최대 5개
+                            slots = [(r, c) for r in range(N_ROWS) for c in range(N_COLS)][:5]
+                            for row_i, col_i in slots:
+                                cx1 = int(pw2 * col_i / N_COLS)
+                                cx2 = int(pw2 * (col_i + 1) / N_COLS)
+                                cy1 = int(ph * row_i / N_ROWS)
+                                cy2 = int(ph * (row_i + 1) / N_ROWS)
+                                cell = pcrop[cy1:cy2, cx1:cx2]
+                                ch, cw = cell.shape[:2]
+                                if cw < 10 or ch < 5:
                                     continue
-                                row_crop = pcrop[row_y1:row_y2, :]
-                                rh, rw = row_crop.shape[:2]
-                                half = rw // 2
-                                # 각 열(좌/우)을 개별 처리
-                                for col_crop in [row_crop[:, :half], row_crop[:, half:]]:
-                                    if col_crop.shape[1] < 20:
-                                        continue
-                                    ch, cw = col_crop.shape[:2]
-                                    # 배지 영역: 우측 20% (등급 색상)
-                                    badge_x = int(cw * 0.80)
-                                    badge = col_crop[:, badge_x:]
-                                    grade = _grade_from_badge(badge)
-                                    if grade is None:
-                                        continue
-                                    # 이름 영역: 좌측 75% OCR
-                                    name_crop = col_crop[:, :int(cw * 0.75)]
-                                    nh, nw = name_crop.shape[:2]
-                                    scale = max(3, 200 // max(nh, 1))
-                                    nup = cv2.resize(name_crop, (nw*scale, nh*scale),
-                                                     interpolation=cv2.INTER_CUBIC)
-                                    ntexts = _ocr_crop(nup)
-                                    nraw = ' '.join(t for t, _ in ntexts) if ntexts else ''
-                                    # 한글 이름만 추출 (2글자 이상)
-                                    nm = _re2.search(r'[\uAC00-\uD7A3]{2,}', nraw)
-                                    if nm:
-                                        pairs.append((nm.group(), grade))
+                                # 등급 배지 색상
+                                badge = cell[:, int(cw * BADGE_X):]
+                                grade = _grade_from_badge(badge)
+                                if grade is None:
+                                    continue          # 빈 슬롯 스킵
+                                # 이름 OCR
+                                name_crop = cell[:, :int(cw * NAME_W)]
+                                nh, nw = name_crop.shape[:2]
+                                scale = max(3, 200 // max(nh, 1))
+                                nup = cv2.resize(name_crop, (nw * scale, nh * scale),
+                                                 interpolation=cv2.INTER_CUBIC)
+                                ntexts = _ocr_crop(nup)
+                                nraw = ' '.join(t for t, _ in ntexts) if ntexts else ''
+                                nm = _re2.search(r'[\uAC00-\uD7A3]{2,}', nraw)
+                                if nm:
+                                    pairs.append((nm.group(), grade))
 
                     pitches_str = '  '.join(f"{n}:{g.upper()}" for n, g in pairs)
                     self.extract_results['pitches_area'] = pitches_str
