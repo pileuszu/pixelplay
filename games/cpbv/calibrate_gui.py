@@ -823,9 +823,6 @@ class CalibrationGUI:
 
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
-                    # overall: 마지막에 계산 (루프 후 처리)
-                    if key == 'overall_area':
-                        continue
 
                     # stamina_bar 스킵
                     if key == 'stamina_bar':
@@ -874,19 +871,25 @@ class CalibrationGUI:
                 # ─── 사후 처리: overall 계산 + 숫자 필드 정리 + 요약 ─────────
                 import re as _re
 
-                # overall 스탯 평균 계산
-                stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
-                if stat_keys:
-                    vals = []
-                    for sk in stat_keys:
-                        m = _re.search(r'\d+', self.extract_results.get(sk, ''))
-                        if m: vals.append(int(m.group()))
-                    self.extract_results['overall_area'] = (
-                        str(round(sum(vals)/len(vals))) if vals else ''
-                    )
+                # overall: OCR 추출 우선, 실패 시 스탯 평균 fallback
+                ocr_overall = self.extract_results.get('overall_area', '')
+                m_ov = _re.search(r'\d+', ocr_overall)
+                if m_ov:
+                    self.extract_results['overall_area'] = m_ov.group()
+                else:
+                    # OCR 실패 → 스탯 평균으로 계산
+                    stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
+                    if stat_keys:
+                        vals = []
+                        for sk in stat_keys:
+                            m = _re.search(r'\d+', self.extract_results.get(sk, ''))
+                            if m: vals.append(int(m.group()))
+                        self.extract_results['overall_area'] = (
+                            str(round(sum(vals)/len(vals))) if vals else ''
+                        )
 
                 # 숫자 전용 필드 기호 제거
-                NUMERIC_KEYS = {'launch_area','setdeck_area',
+                NUMERIC_KEYS = {'launch_area','setdeck_area','overall_area',
                                 'stat_power','stat_endure','stat_contact',
                                 'stat_run','stat_eye','stat_defense',
                                 'stat_speed','stat_control','stat_break',
