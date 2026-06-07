@@ -151,10 +151,12 @@ source venv/bin/activate
 
 ```bash
 pip install torch==2.3.1 torchvision==0.18.1 --index-url https://download.pytorch.org/whl/cpu
+pip install "numpy<2"
 pip install easyocr opencv-python pillow
 ```
 
-> **주의**: torch는 CPU 버전으로 설치합니다 (GPU 불필요).
+> **주의**: torch 2.3.x는 NumPy 2.x와 충돌합니다. 반드시 `numpy<2` 버전을 사용하세요.  
+> GPU가 없어도 동작합니다 (CPU 버전으로 설치).
 
 ### 4. config_cpbv.py 업데이트
 
@@ -298,5 +300,6 @@ STREAM_WIDTH, STREAM_HEIGHT = 1280, 720
 | 마우스 클릭 안 됨 | mouse_server.py 미실행 | 게임 PC에서 서버 실행 |
 | 화면이 검게 나옴 | 창 좌표 오류 | `get_window_rect.ps1` 재실행 후 config 업데이트 |
 | ??? 텍스트 표시 | PIL 폰트 없음 | `C:/Windows/Fonts/malgun.ttf` 존재 확인 |
-| OCR 안 됨 | easyocr 미설치 | `pip install easyocr` |
+| OCR 안 됨 (`Numpy is not available`) | NumPy 2.x 설치됨 | `pip install "numpy<2"` |
+| OCR 안 됨 (`easyocr` 없음) | easyocr 미설치 | `pip install easyocr` |
 | torch 버전 충돌 | GPU 버전 설치됨 | CPU 버전으로 재설치 (위 명령어 참조) |

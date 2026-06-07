@@ -295,9 +295,14 @@ class CalibrationGUI:
         self.mx = self.my = 0
 
         # OCR 관련
-        self.ocr_boxes  = []
-        self.ocr_status = ''
-        self.ocr_running= False
+        self.ocr_boxes   = []
+        self.ocr_status  = ''
+        self.ocr_running = False
+
+        # E키 추출 결과: {key: text}
+        self.extract_results = {}
+        self.extract_running = False
+        self.extract_status  = ''
 
         # 마우스 클라이언트
         self.mouse = MouseClient(MOUSE_HOST, MOUSE_PORT) if MOUSE_HOST else None
@@ -474,6 +479,72 @@ class CalibrationGUI:
 
         threading.Thread(target=_run, daemon=True).start()
 
+    # ── OCR 영역별 추출 테스트 (E키) ─────────────────────────────────
+    def start_ocr_extract(self):
+        """현재 모드의 각 영역 크롭 → OCR → 터미널+GUI 표시"""
+        if self.extract_running:
+            print("[!] 이미 추출 중"); return
+        if self.frame is None:
+            print("[!] R키로 프레임 캡처 먼저"); return
+
+        def _run():
+            self.extract_running = True
+            self.extract_status  = '추출 중...'
+            self.extract_results = {}
+            print(f"\n{'─'*52}")
+            print(f"  OCR 추출 테스트 │ {self.mode_label}")
+            print(f"{'─'*52}")
+            try:
+                import easyocr
+                reader = easyocr.Reader(['ko', 'en'], verbose=False)
+                regions = self.regions[self.mode]
+
+                for key, region in regions.items():
+                    x1, y1, x2, y2 = rect_px(*region)
+                    # 프레임 범위 클램프
+                    fh, fw = self.frame.shape[:2]
+                    x1c, y1c = max(0,x1), max(0,y1)
+                    x2c, y2c = min(fw,x2), min(fh,y2)
+                    if x2c <= x1c or y2c <= y1c:
+                        self.extract_results[key] = '(범위 오류)'
+                        print(f"  {key:<22} : (범위 오류)")
+                        continue
+
+                    crop = self.frame[y1c:y2c, x1c:x2c]
+
+                    # 작은 크롭은 확대 (OCR 정확도 향상)
+                    ch, cw = crop.shape[:2]
+                    if cw < 60 or ch < 20:
+                        scale = max(3, 60 // max(cw,1))
+                        crop = cv2.resize(crop, (cw*scale, ch*scale),
+                                          interpolation=cv2.INTER_CUBIC)
+
+                    results = reader.readtext(crop, detail=1)
+                    texts = [(t, c) for _, t, c in results if c > 0.25]
+                    if texts:
+                        val = ' | '.join(t for t, _ in texts)
+                        conf_avg = sum(c for _, c in texts) / len(texts)
+                        display  = f"{val}  ({conf_avg:.0%})"
+                    else:
+                        display = '(인식 안 됨)'
+
+                    self.extract_results[key] = val if texts else ''
+                    print(f"  {key:<22} : {display}")
+
+                self.extract_status = f"완료 ({len(regions)}개 영역)"
+                print(f"{'─'*52}\n")
+
+            except ImportError:
+                self.extract_status = 'easyocr 없음'
+                print("[!] pip install easyocr")
+            except Exception as e:
+                self.extract_status = f'오류: {e}'
+                print(f"[!] 추출 오류: {e}")
+            finally:
+                self.extract_running = False
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ── 렌더링 ────────────────────────────────────────────────────────
     def _draw(self):
         if self.frame is not None:
@@ -534,10 +605,11 @@ class CalibrationGUI:
         conn_text  = 'MOUSE:OK' if (self.mouse and self.mouse.connected) else 'MOUSE:X'
 
         # 상단 텍스트
+        extract_mark = f'  | E:{self.extract_status}' if self.extract_status else ''
         hud_text = (f"{live_mark}[{self.mode_idx+1}/{len(MODES)}] {self.mode_label}"
-                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  S:저장"
+                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  E:추출테스트  S:저장"
                     f"  |  우클릭/T:클릭테스트  Q:종료"
-                    f"{ocr_mark}")
+                    f"{ocr_mark}{extract_mark}")
         text_items.append((hud_text, 4, 3, 13, (230,230,230), None))
         # 연결 상태 (우상단)
         text_items.append((conn_text, w-80, 3, 12, conn_color, None))
@@ -545,12 +617,19 @@ class CalibrationGUI:
         if self.last_click_label:
             text_items.append((f'클릭: {self.last_click_label}', 4, 25, 11, (200,255,100), None))
 
-        # 영역 라벨
+        # 영역 라벨 + 추출 결과
         for key, region in self.regions[self.mode].items():
             x1, y1, x2, y2 = rect_px(*region)
             is_sel = (self.selected == ('region', self.mode, key))
             c = (0,255,255) if is_sel else color
+            # 영역 키 라벨
             text_items.append((key, x1+2, max(y1-14, 2), 11, c, None))
+            # OCR 추출 결과 - 박스 안에 노란색으로
+            if key in self.extract_results and self.extract_results[key]:
+                val_text = self.extract_results[key]
+                # 박스 안에 배경 채워서 텍스트 표시
+                cv2.rectangle(img, (x1,y1), (x2,y2), (30,30,30), -1)  # 어두운 오버레이
+                text_items.append((val_text, x1+3, y1+3, 11, (80,255,255), None))
 
         # 클릭 포인트 라벨
         for key, (rx, ry) in self.click_pts.items():
@@ -608,10 +687,12 @@ class CalibrationGUI:
             elif key in (ord('n'), 9):
                 self.mode_idx = (self.mode_idx+1) % len(MODES)
                 self.ocr_boxes = []; self.ocr_status = ''
+                self.extract_results = {}; self.extract_status = ''
                 print(f"  → {self.mode_label}")
             elif key == ord('p'):
                 self.mode_idx = (self.mode_idx-1) % len(MODES)
                 self.ocr_boxes = []; self.ocr_status = ''
+                self.extract_results = {}; self.extract_status = ''
                 print(f"  → {self.mode_label}")
             elif key == ord('r'):
                 ok = self.grab_frame()
@@ -621,6 +702,8 @@ class CalibrationGUI:
                 print(f"  라이브: {'ON' if self.live else 'OFF'}")
             elif key == ord('a'):
                 self.start_ocr_detect()
+            elif key == ord('e'):
+                self.start_ocr_extract()
             elif key == ord('s'):
                 self.save()
             elif key == ord('t'):
@@ -632,7 +715,9 @@ class CalibrationGUI:
                 else:
                     print("[!] 먼저 클릭 포인트(점)를 선택하세요")
             elif key == ord('c'):
-                self.ocr_boxes = []; self.ocr_status = ''; self.last_click_label = ''
+                self.ocr_boxes = []; self.ocr_status = ''
+                self.extract_results = {}; self.extract_status = ''
+                self.last_click_label = ''
 
         self.stream.stop()
         cv2.destroyAllWindows()
