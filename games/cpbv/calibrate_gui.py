@@ -706,7 +706,7 @@ class CalibrationGUI:
                     print(f"{'─'*52}\n")
                     return
 
-                # ─── batter_p3: 핫/콜드존 색상 분류 ──────────────────────────
+                # ─── batter_p3: 핫/콜드존 색상코드 추출 ───────────────────────
                 if self.mode == 'batter_p3':
                     pts_list = self.pt_pts.get('batter_p3', {}).get('hotzone_pts', [])
                     fh, fw = self.frame.shape[:2]
@@ -715,33 +715,21 @@ class CalibrationGUI:
                     for idx in range(total):
                         pt = pts_list[idx] if idx < len(pts_list) else None
                         if pt is None:
-                            grid.append('?')
+                            grid.append('??????')
                             continue
                         px = int(STREAM_GAME_X1 + pt[0] * GAME_W)
                         py = int(STREAM_GAME_Y1 + pt[1] * GAME_H)
                         px = max(0, min(fw-1, px))
                         py = max(0, min(fh-1, py))
-                        bgr = self.frame[py, px]
-                        hsv = cv2.cvtColor(
-                            np.array([[bgr]], dtype=np.uint8),
-                            cv2.COLOR_BGR2HSV)[0][0]
-                        h, s, v = int(hsv[0]), int(hsv[1]), int(hsv[2])
-                        # HSV 분류: 빨강계(H<10 or H>170) = 핫, 파랑계(H100~140) = 콜드
-                        if s < 50:
-                            level = 0   # 무채색 / 중립
-                        elif h <= 10 or h >= 170:
-                            level = 2 if s > 150 else 1   # 매우핫 / 핫
-                        elif 100 <= h <= 140:
-                            level = -2 if s > 150 else -1  # 매우콜드 / 콜드
-                        else:
-                            level = 0
-                        grid.append(str(level))
-                    # 3×3 출력
+                        b, g, r = self.frame[py, px]
+                        hex_color = f"{int(r):02X}{int(g):02X}{int(b):02X}"
+                        grid.append(hex_color)
+                    # 저장: 콤마 구분
                     self.extract_results['hotzone_pts'] = ','.join(grid)
                     print(f"  {'hotzone_pts':<22} :")
                     for row in range(HOTZONE_ROWS):
                         row_vals = grid[row*HOTZONE_COLS:(row+1)*HOTZONE_COLS]
-                        print(f"    {' '.join(f'{v:>3}' for v in row_vals)}")
+                        print(f"    {'  '.join(f'#{v}' for v in row_vals)}")
                     self.extract_status = "완료 (핫존 9셀)"
                     print(f"{'─'*52}\n")
                     return
