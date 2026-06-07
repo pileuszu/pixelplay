@@ -810,12 +810,13 @@ class CalibrationGUI:
                     print(f"{'─'*52}\n")
                     return
 
-                # ─── pitcher_p3: 체력바 + 구종 추출 ─────────────────────────
+                # ─── pitcher_p3: 구종 추출 ───────────────────────────────────
                 if self.mode == 'pitcher_p3':
                     import re as _re2
                     fh, fw = self.frame.shape[:2]
+                    pairs = []
 
-                    # ① 체력바: 픽셀 밝기로 채움 비율 계산
+                    # ① 체력바: 픽셀 밝기로 채움 비율 계산 (5색상 구간 누적)
                     sbar = regions.get('stamina_bar_detail')
                     if sbar:
                         bx1, by1, bx2, by2 = rect_px(*sbar)
@@ -828,14 +829,12 @@ class CalibrationGUI:
                             filled = 0
                             for xi in range(bw):
                                 b, g, r = bar_crop[mid_y, xi]
-                                brightness = (int(r) + int(g) + int(b)) / 3
-                                if brightness > 40:
+                                if (int(r) + int(g) + int(b)) / 3 > 40:
                                     filled = xi + 1
                             ratio = round(filled / bw * 100)
                             self.extract_results['stamina_bar_detail'] = str(ratio)
-                            print(f"  {'stamina_bar_detail':<22} : {ratio}%  ({filled}/{bw}px)")
+                            print(f"  {'stamina_bar_detail':<22} : {ratio}%")
 
-                    # ② 구종: pitches_area OCR -> (구종명, 등급) 파싱
                     parea = regions.get('pitches_area')
                     if parea:
                         px1, py1, px2, py2 = rect_px(*parea)
@@ -843,27 +842,59 @@ class CalibrationGUI:
                         py1 = max(0, min(fh-1, py1)); py2 = max(0, min(fh, py2))
                         pcrop = self.frame[py1:py2, px1:px2]
                         ph, pw2 = pcrop.shape[:2]
-                        if pw2 > 0 and ph > 0:
-                            scale = max(2, 300 // max(pw2, 1))
-                            pcrop_up = cv2.resize(pcrop, (pw2*scale, ph*scale),
-                                                   interpolation=cv2.INTER_CUBIC)
-                            raw_texts = _ocr_crop(pcrop_up)
-                            raw = ' '.join(t for t, _ in raw_texts) if raw_texts else ''
-                            # 구종명(한글 2+자) + 등급(S/A/B/C/D + 선택적 +/-) 쌍 추출
-                            pairs = _re2.findall(
-                                r'([\uAC00-\uD7A3]{2,})\s*([SABCDsabcd][+\-]?)',
-                                raw
-                            )
-                            pitches_str = '  '.join(
-                                f"{n}:{g.upper()}" for n, g in pairs
-                            )
-                            self.extract_results['pitches_area'] = pitches_str
-                            if pairs:
-                                print(f"  {'pitches_area':<22} : {pitches_str}")
-                            else:
-                                print(f"  {'pitches_area':<22} : (파싱실패) raw={raw!r}")
 
-                    self.extract_status = "완료 (구종/체력)"
+                        if pw2 > 0 and ph > 0:
+                            # 수평 구분선 자동 감지: 평균 밝기가 낮은 행 = 셀 경계
+                            row_brightness = [
+                                float(pcrop[ry, :, :].mean()) for ry in range(ph)
+                            ]
+                            # 밝기 임계: 전체 평균의 60% 이하 = 어두운 구분선
+                            avg_b = sum(row_brightness) / max(len(row_brightness), 1)
+                            threshold = avg_b * 0.6
+                            # 구분선 y 위치 찾기 (연속된 어두운 행 중 가운데)
+                            sep_ys = []
+                            in_sep = False
+                            seg_start = 0
+                            for ry, b in enumerate(row_brightness):
+                                if b < threshold and not in_sep:
+                                    in_sep = True; seg_start = ry
+                                elif b >= threshold and in_sep:
+                                    in_sep = False
+                                    sep_ys.append((seg_start + ry) // 2)
+                            # 행 범위 생성
+                            row_bounds = []
+                            prev = 0
+                            for sy in sep_ys:
+                                if sy - prev > ph * 0.1:  # 최소 행 높이 10%
+                                    row_bounds.append((prev, sy))
+                                    prev = sy
+                            row_bounds.append((prev, ph))
+
+                            for row_y1, row_y2 in row_bounds:
+                                if row_y2 - row_y1 < 10:
+                                    continue
+                                row_crop = pcrop[row_y1:row_y2, :]
+                                rh, rw = row_crop.shape[:2]
+                                # 각 행을 3배 upscale → OCR
+                                scale = max(3, 200 // max(rh, 1))
+                                row_up = cv2.resize(row_crop, (rw*scale, rh*scale),
+                                                    interpolation=cv2.INTER_CUBIC)
+                                row_texts = _ocr_crop(row_up)
+                                row_raw = ' '.join(t for t, _ in row_texts) if row_texts else ''
+                                found = _re2.findall(
+                                    r'([\uAC00-\uD7A3]{2,})\s*([SABCDsabcd][+\-]?)',
+                                    row_raw
+                                )
+                                pairs.extend(found)
+
+                    pitches_str = '  '.join(f"{n}:{g.upper()}" for n, g in pairs)
+                    self.extract_results['pitches_area'] = pitches_str
+                    if pairs:
+                        print(f"  {'pitches_area':<22} : {pitches_str}")
+                    else:
+                        print(f"  {'pitches_area':<22} : (파싱실패)")
+
+                    self.extract_status = "완료 (구종)"
                     print(f"{'─'*52}\n")
                     return
 
