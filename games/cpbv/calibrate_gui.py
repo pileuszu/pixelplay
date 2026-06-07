@@ -846,12 +846,19 @@ class CalibrationGUI:
                         print(f"  {key:<22} : {display}")
                         continue
 
-                    # 일반 OCR
+                    # 일반 OCR: 업스케일 + 대비 강화
                     ch, cw = crop.shape[:2]
-                    if cw < 60 or ch < 20:
-                        scale = max(3, 60 // max(cw,1))
+                    # 최소 3배 upscale (한글 자모 구분력 향상)
+                    scale = max(3, 120 // max(cw, 1), 60 // max(ch, 1))
+                    if scale > 1:
                         crop = cv2.resize(crop, (cw*scale, ch*scale),
                                           interpolation=cv2.INTER_CUBIC)
+                    # CLAHE로 대비 강화 (어두운 배경 텍스트)
+                    lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+                    l, a, b = cv2.split(lab)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+                    l = clahe.apply(l)
+                    crop = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
                     texts = _ocr_crop(crop)
                     if texts:
                         val = ' | '.join(t for t, _ in texts)
