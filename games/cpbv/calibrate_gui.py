@@ -684,19 +684,21 @@ class CalibrationGUI:
             print(f"{'─'*52}")
             try:
                 from surya.recognition import RecognitionPredictor
-                from surya.detection import DetectionPredictor
                 from PIL import Image as _PilImg
 
-                det_predictor = DetectionPredictor()
                 rec_predictor = RecognitionPredictor()
                 regions = self.regions[self.mode]
 
                 def _ocr_crop(crop_bgr):
-                    """crop(BGR numpy) → [(text, conf), ...]"""
+                    """crop(BGR numpy) → [(text, conf), ...]
+                    detection 없이 전체 크롭을 bbox로 직접 넘김 (게임 UI 숫자 detection 실패 방지)
+                    """
                     import re as _re
                     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
                     pil_img = _PilImg.fromarray(rgb)
-                    results = rec_predictor([pil_img], det_predictor=det_predictor)
+                    w, h = pil_img.size
+                    # 전체 크롭을 단일 bbox로 전달 → detection 건너뜀
+                    results = rec_predictor([pil_img], bboxes=[[[0, 0, w, h]]])
                     if not results or not results[0].text_lines:
                         return []
                     return [(_re.sub(r'<[^>]+>', '', line.text).strip(), line.confidence)
