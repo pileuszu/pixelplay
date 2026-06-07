@@ -62,6 +62,13 @@ from games.cpbv.config_cpbv import (
 )
 
 OVERRIDE_PATH = os.path.join(os.path.dirname(__file__), 'config_override.json')
+TEAM_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'team_templates')
+
+TEAMS = [
+    ('1', '두산'), ('2', '삼성'), ('3', '한화'), ('4', '롯데'),
+    ('5', 'KIA'),    ('6', '키움'), ('7', 'SSG'),    ('8', 'LG'),
+    ('9', 'NC'),     ('0', 'KT'),
+]
 
 GAME_W = STREAM_GAME_X2 - STREAM_GAME_X1
 GAME_H = STREAM_GAME_Y2 - STREAM_GAME_Y1
@@ -310,6 +317,9 @@ class CalibrationGUI:
         self.mouse = MouseClient(MOUSE_HOST, MOUSE_PORT) if MOUSE_HOST else None
         self.last_click_label = ''
 
+        # 로고 저장 모드
+        self.logo_save_mode = False
+
     # ── 속성 ──────────────────────────────────────────────────────────
     @property
     def mode(self):
@@ -524,6 +534,33 @@ class CalibrationGUI:
             return best_team, best_score, f"(저신도 낙음: {best_score:.0%})"
         return None, 0.0, "(인식 실패)"
 
+    def _save_team_logo(self, team_name):
+        """team_logo 영역 크롭을 team_templates/팀이름.png로 저장"""
+        region = self.regions.get(self.mode, {}).get('team_logo')
+        if region is None:
+            # 어떤 모드든 team_logo가 있으면 사용
+            for mode_key, regs in self.regions.items():
+                if 'team_logo' in regs:
+                    region = regs['team_logo']
+                    break
+        if region is None:
+            print("[!] team_logo 영역 미정의"); return
+        if self.frame is None:
+            print("[!] 프레임 없음 (R키 먼저)"); return
+
+        x1, y1, x2, y2 = rect_px(*region)
+        fh, fw = self.frame.shape[:2]
+        x1c, y1c = max(0,x1), max(0,y1)
+        x2c, y2c = min(fw,x2), min(fh,y2)
+        if x2c <= x1c or y2c <= y1c:
+            print("[!] 영역 범위 오류"); return
+
+        crop = self.frame[y1c:y2c, x1c:x2c]
+        os.makedirs(TEAM_TEMPLATES_DIR, exist_ok=True)
+        path = os.path.join(TEAM_TEMPLATES_DIR, f"{team_name}.png")
+        cv2.imwrite(path, crop)
+        print(f"[+] 팀 로고 저장: {path}  ({crop.shape[1]}×{crop.shape[0]}px)")
+
     def start_ocr_extract(self):
         """현재 모드의 각 영역 크롭 → OCR → 터미널+GUI 표시"""
         if self.extract_running:
@@ -666,10 +703,11 @@ class CalibrationGUI:
 
         # 상단 텍스트
         extract_mark = f'  | E:{self.extract_status}' if self.extract_status else ''
+        logo_mark = '  | [V:로고저장모드]' if self.logo_save_mode else ''
         hud_text = (f"{live_mark}[{self.mode_idx+1}/{len(MODES)}] {self.mode_label}"
-                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  E:추출  C:클리어  S:저장"
+                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  E:추출  C:클리어  V:로고  S:저장"
                     f"  |  우클릭/T:클릭테스트  Q:종료"
-                    f"{ocr_mark}{extract_mark}")
+                    f"{ocr_mark}{extract_mark}{logo_mark}")
         text_items.append((hud_text, 4, 3, 13, (230,230,230), None))
         # 연결 상태 (우상단)
         text_items.append((conn_text, w-80, 3, 12, conn_color, None))
@@ -712,6 +750,19 @@ class CalibrationGUI:
                 info = (f"  [{self.selected[2]}]  rx={val[0]:.4f}  ry={val[1]:.4f}"
                         f"  rw={val[2]:.4f}  rh={val[3]:.4f}")
             text_items.append((info, 4, h-19, 13, (255,255,100), None))
+
+        # 팀 로고 저장 모드 오버레이
+        if self.logo_save_mode:
+            ow, oh = 280, 40 + len(TEAMS) * 22
+            ox, oy = (w - ow) // 2, (h - oh) // 2
+            cv2.rectangle(img, (ox-4, oy-4), (ox+ow+4, oy+oh+4), (0,180,255), 2)
+            cv2.rectangle(img, (ox, oy), (ox+ow, oy+oh), (15,15,40), -1)
+            text_items.append(('팀 로고 저장 — 번호 선택 (V:취소)', ox+8, oy+4, 14, (0,220,255), None))
+            for i, (num, team) in enumerate(TEAMS):
+                saved = os.path.exists(os.path.join(TEAM_TEMPLATES_DIR, f'{team}.png'))
+                mark = ' ✔' if saved else ''
+                text_items.append((f'  {num}: {team}{mark}', ox+8, oy+26+i*22, 13,
+                                   (80,255,80) if saved else (255,220,80), None))
 
         img = draw_text_pil(img, text_items)
         return img
@@ -774,6 +825,16 @@ class CalibrationGUI:
                     self._test_click(k, rx, ry)
                 else:
                     print("[!] 먼저 클릭 포인트(점)를 선택하세요")
+            elif key == ord('v'):
+                self.logo_save_mode = not self.logo_save_mode
+                if self.logo_save_mode:
+                    print("  [V] 팀 로고 저장 모드: " + '  '.join(f"{n}:{t}" for n,t in TEAMS))
+            elif self.logo_save_mode and (48 <= key <= 57):  # 0에서 9
+                digit = chr(key)
+                match = next((t for n,t in TEAMS if n == digit), None)
+                if match:
+                    self._save_team_logo(match)
+                self.logo_save_mode = False
             elif key == ord('c'):
                 self.ocr_boxes = []; self.ocr_status = ''
                 self.extract_results = {}; self.extract_status = ''
