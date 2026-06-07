@@ -609,7 +609,7 @@ class CalibrationGUI:
         # 상단 텍스트
         extract_mark = f'  | E:{self.extract_status}' if self.extract_status else ''
         hud_text = (f"{live_mark}[{self.mode_idx+1}/{len(MODES)}] {self.mode_label}"
-                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  E:추출테스트  S:저장"
+                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  E:추출  C:클리어  S:저장"
                     f"  |  우클릭/T:클릭테스트  Q:종료"
                     f"{ocr_mark}{extract_mark}")
         text_items.append((hud_text, 4, 3, 13, (230,230,230), None))
