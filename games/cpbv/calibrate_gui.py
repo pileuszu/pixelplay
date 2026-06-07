@@ -35,11 +35,12 @@ def _classify_pitch_name(ocr_text):
     """OCR 결과 → 알려진 구종명으로 분류"""
     if not ocr_text:
         return ''
-    for pitch in KNOWN_PITCH_NAMES:
+    _sorted_pitches = sorted(KNOWN_PITCH_NAMES, key=len, reverse=True)
+    for pitch in _sorted_pitches:
         if pitch in ocr_text:
             return pitch
     best_name, best_score = '', 0.0
-    for pitch in KNOWN_PITCH_NAMES:
+    for pitch in _sorted_pitches:
         if ocr_text in pitch and len(ocr_text) >= 2:
             s = len(ocr_text) / len(pitch)
             if s > best_score:

@@ -383,7 +383,8 @@ def _classify_pitch_name(ocr_text: str) -> str:
     best_name = ''
     best_score = 0.0
 
-    for pitch in KNOWN_PITCH_NAMES:
+    # 긴 이름 먼저 검사 (서클체인지업 > 체인지업 우선)
+    for pitch in sorted(KNOWN_PITCH_NAMES, key=len, reverse=True):
         # 1) 직접 포함 확인 (가장 확실)
         if pitch in ocr_text:
             return pitch
