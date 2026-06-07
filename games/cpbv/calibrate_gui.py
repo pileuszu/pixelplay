@@ -861,6 +861,12 @@ class CalibrationGUI:
                     crop = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
                     texts = _ocr_crop(crop)
                     if texts:
+                        # 중복 텍스트 제거 (surya가 같은 줄을 여러 번 반환하는 경우)
+                        seen, unique = set(), []
+                        for t, c in sorted(texts, key=lambda x: -x[1]):
+                            if t not in seen:
+                                seen.add(t); unique.append((t, c))
+                        texts = unique
                         val = ' | '.join(t for t, _ in texts)
                         conf_avg = sum(c for _, c in texts) / len(texts)
                         display  = f"{val}  ({conf_avg:.0%})"
@@ -1086,6 +1092,8 @@ class CalibrationGUI:
 
         print("[*] GUI 시작  |  드래그: 영역 편집  |  A: OCR 자동감지  |  S: 저장  |  L: 라이브 토글")
 
+        import time as _time
+        _last_save = 0.0
         while True:
             if self.live: self.grab_frame()
             cv2.imshow(win, self._draw())
@@ -1113,7 +1121,10 @@ class CalibrationGUI:
             elif key == ord('e'):
                 self.start_ocr_extract()
             elif key == ord('s'):
-                self.save()
+                now = _time.time()
+                if now - _last_save >= 1.0:  # 1초 debounce
+                    self.save()
+                    _last_save = now
             elif key == ord('t'):
                 # T: 선택된 클릭 포인트 테스트
                 if self.selected and self.selected[0] == 'click':
