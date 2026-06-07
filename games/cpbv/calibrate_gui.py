@@ -894,7 +894,7 @@ class CalibrationGUI:
                                              interpolation=cv2.INTER_CUBIC)
                             gtexts = _ocr_crop(gup)
                             graw = ' '.join(t for t, _ in gtexts) if gtexts else ''
-                            gm = _re2.search(r'[SABCDsabcd]', graw)
+                            gm = _re2.search(r'[SABCDEsabcde]', graw)
                             if gm:
                                 grade = gm.group().upper()
 
