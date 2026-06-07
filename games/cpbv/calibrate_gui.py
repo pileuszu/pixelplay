@@ -482,6 +482,48 @@ class CalibrationGUI:
         threading.Thread(target=_run, daemon=True).start()
 
     # ── OCR 영역별 추출 테스트 (E키) ─────────────────────────────────
+    def _match_team_logo(self, crop):
+        """스트림 필레임 크롭에 저장된 팀 로고 템플릿 매칭"""
+        tmpl_dir = os.path.join(os.path.dirname(__file__), 'team_templates')
+        if not os.path.exists(tmpl_dir):
+            return None, 0.0, "team_templates 폴더 없음"
+
+        templates = [f for f in os.listdir(tmpl_dir) if f.endswith('.png')]
+        if not templates:
+            return None, 0.0, "저장된 템플릿 없음 (calibrate.py [t] 사용)"
+
+        best_score = -1.0
+        best_team  = None
+
+        for fname in templates:
+            team = os.path.splitext(fname)[0]
+            tmpl = cv2.imread(os.path.join(tmpl_dir, fname))
+            if tmpl is None: continue
+
+            th, tw = tmpl.shape[:2]
+            ch, cw = crop.shape[:2]
+
+            # 템플릿이 크롭보다 크면 크롭 크기에 맞춰 축소
+            if tw > cw or th > ch:
+                scale = min(cw / max(tw,1), ch / max(th,1))
+                tmpl  = cv2.resize(tmpl, (max(1,int(tw*scale)), max(1,int(th*scale))))
+                th, tw = tmpl.shape[:2]
+
+            if tw < 4 or th < 4 or tw > cw or th > ch:
+                continue
+
+            res = cv2.matchTemplate(crop, tmpl, cv2.TM_CCOEFF_NORMED)
+            _, mv, _, _ = cv2.minMaxLoc(res)
+            if mv > best_score:
+                best_score = mv
+                best_team  = team
+
+        if best_team and best_score >= 0.5:
+            return best_team, best_score, None
+        elif best_team:
+            return best_team, best_score, f"(저신도 낙음: {best_score:.0%})"
+        return None, 0.0, "(인식 실패)"
+
     def start_ocr_extract(self):
         """현재 모드의 각 영역 크롭 → OCR → 터미널+GUI 표시"""
         if self.extract_running:
@@ -514,6 +556,22 @@ class CalibrationGUI:
 
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
+                    # ─── 팀 로고: 템플릿 매칭 ───────────────────────────
+                    if key == 'team_logo':
+                        team, score, warn = self._match_team_logo(crop)
+                        if team and score >= 0.5:
+                            display = f"{team}  ({score:.0%})"
+                            self.extract_results[key] = team
+                        elif team:
+                            display = f"{team}?  ({score:.0%}) ← 저신도 낙음"
+                            self.extract_results[key] = team
+                        else:
+                            display = warn or '(인식 실패)'
+                            self.extract_results[key] = ''
+                        print(f"  {key:<22} : {display}")
+                        continue
+
+                    # ─── 일반 텍스트 영역: OCR ──────────────────────────
                     # 작은 크롭은 확대 (OCR 정확도 향상)
                     ch, cw = crop.shape[:2]
                     if cw < 60 or ch < 20:
