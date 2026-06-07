@@ -75,9 +75,11 @@ def _ocr_crop(img_bgr):
         return []
     rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(rgb)
-    bboxes = [[[0, 0, w, h]]]
-    result = _rec_pred([pil_img], [['ko', 'en']], bboxes=bboxes)
-    return [(ln.text, ln.confidence) for ln in result[0].text_lines]
+    result = _rec_pred([pil_img], bboxes=[[[0, 0, w, h]]], math_mode=False)
+    if not result or not result[0].text_lines:
+        return []
+    return [(ln.text, ln.confidence) for ln in result[0].text_lines
+            if ln.confidence > 0.25]
 
 
 # ─── 좌표 변환 ───────────────────────────────────────────────────────────────
