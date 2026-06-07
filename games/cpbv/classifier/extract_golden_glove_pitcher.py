@@ -540,9 +540,9 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
         print(f"\n[{idx+1}] ── P1 추출 중...")
         for attempt in range(3):
             p1 = extract_pitcher_p1(stream.get_latest())
-            if p1['name']:
+            if p1['name'] and p1['overall'] is not None:
                 break
-            print(f"    [!] P1 이름 비어있음, 재시도 ({attempt+1}/3)...")
+            print(f"    [!] P1 이름/overall 미추출, 재시도 ({attempt+1}/3)...")
             time.sleep(page_wait)
         print(f"    이름={p1['name']}  전체={p1['overall']}  포지션={p1['position']}  팀={p1['team']}")
         print(f"    능력치={p1['stats']}")
@@ -581,9 +581,16 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             frame = stream.get_latest()
             p3 = extract_pitcher_p3(frame)
             total_px = sum(p3['stamina']['px_widths']) if p3['stamina'] else 0
-            if total_px > 20:
+            pnames = [x['name'] for x in p3['pitches']]
+            has_dup = len(pnames) != len(set(pnames))
+            has_qgrade = any(x['grade'] == '?' for x in p3['pitches'])
+            if total_px > 20 and not has_dup and not has_qgrade:
                 break
-            print(f"    [!] P3 체력바 이상(px_total={total_px}), 재시도 ({attempt+1}/3)...")
+            reasons = []
+            if total_px <= 20: reasons.append(f'체력bar={total_px}')
+            if has_dup: reasons.append('중복구종')
+            if has_qgrade: reasons.append('등급?')
+            print(f"    [!] P3 재시도({attempt+1}/3): {', '.join(reasons)}")
             time.sleep(page_wait)
 
         if p3['stamina']:
