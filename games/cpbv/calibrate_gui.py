@@ -895,27 +895,49 @@ class CalibrationGUI:
                                     prev = sy
                             row_bounds.append((prev, ph))
 
+                            def _grade_from_badge(badge_bgr):
+                                """배지 이미지 중심 픽셀 HSV → 등급 문자"""
+                                if badge_bgr.size == 0:
+                                    return None
+                                bh, bw = badge_bgr.shape[:2]
+                                cx, cy = bw // 2, bh // 2
+                                hsv = cv2.cvtColor(badge_bgr, cv2.COLOR_BGR2HSV)
+                                h, s, v = int(hsv[cy, cx, 0]), int(hsv[cy, cx, 1]), int(hsv[cy, cx, 2])
+                                if v < 50 or s < 40:   return 'D'   # 어두움/회색
+                                if h < 12 or h > 165:  return 'A'   # 빨강
+                                if h < 35:             return 'S'   # 금색/노랑
+                                if h < 85:             return 'B'   # 초록
+                                return 'C'                           # 파랑/시안
+
                             for row_y1, row_y2 in row_bounds:
                                 if row_y2 - row_y1 < 8:
                                     continue
                                 row_crop = pcrop[row_y1:row_y2, :]
                                 rh, rw = row_crop.shape[:2]
-                                # 각 행을 좌/우 절반으로 나눠 개별 OCR (2열 레이아웃 대응)
                                 half = rw // 2
-                                for hcrop in [row_crop[:, :half], row_crop[:, half:]]:
-                                    if hcrop.shape[1] < 5:
+                                # 각 열(좌/우)을 개별 처리
+                                for col_crop in [row_crop[:, :half], row_crop[:, half:]]:
+                                    if col_crop.shape[1] < 20:
                                         continue
-                                    hh, hw = hcrop.shape[:2]
-                                    scale = max(3, 200 // max(hh, 1))
-                                    hup = cv2.resize(hcrop, (hw*scale, hh*scale),
+                                    ch, cw = col_crop.shape[:2]
+                                    # 배지 영역: 우측 20% (등급 색상)
+                                    badge_x = int(cw * 0.80)
+                                    badge = col_crop[:, badge_x:]
+                                    grade = _grade_from_badge(badge)
+                                    if grade is None:
+                                        continue
+                                    # 이름 영역: 좌측 75% OCR
+                                    name_crop = col_crop[:, :int(cw * 0.75)]
+                                    nh, nw = name_crop.shape[:2]
+                                    scale = max(3, 200 // max(nh, 1))
+                                    nup = cv2.resize(name_crop, (nw*scale, nh*scale),
                                                      interpolation=cv2.INTER_CUBIC)
-                                    htexts = _ocr_crop(hup)
-                                    hraw = ' '.join(t for t, _ in htexts) if htexts else ''
-                                    found = _re2.findall(
-                                        r'([\uAC00-\uD7A3]{2,})\s*([SABCDsabcd][+\-]?)',
-                                        hraw
-                                    )
-                                    pairs.extend(found)
+                                    ntexts = _ocr_crop(nup)
+                                    nraw = ' '.join(t for t, _ in ntexts) if ntexts else ''
+                                    # 한글 이름만 추출 (2글자 이상)
+                                    nm = _re2.search(r'[\uAC00-\uD7A3]{2,}', nraw)
+                                    if nm:
+                                        pairs.append((nm.group(), grade))
 
                     pitches_str = '  '.join(f"{n}:{g.upper()}" for n, g in pairs)
                     self.extract_results['pitches_area'] = pitches_str
