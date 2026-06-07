@@ -876,6 +876,13 @@ class CalibrationGUI:
                 if pos_raw:
                     self.extract_results['position_area'] = _classify_position(pos_raw, self.mode)
 
+                # 이름 특수문자 정제 (앞뒤 |/- 등 제거, '연도는 유지)
+                name_raw = self.extract_results.get('name_area', '')
+                if name_raw:
+                    name_clean = _re.sub(r"^[^\w']+", '', name_raw)   # 앞쪽 특수문자 제거
+                    name_clean = _re.sub(r"[^\w']+$", '', name_clean)  # 뒤쪽 특수문자 제거
+                    self.extract_results['name_area'] = name_clean.strip()
+
                 # 종합 요약 출력
                 print(f"\n{'─'*52}")
                 print(f"  {'[ 추출 결과 요약 ]':^48}")
