@@ -542,9 +542,10 @@ class CalibrationGUI:
         return None, 0.0, "(인식 실패)"
 
     def _count_potential_bar(self, crop):
-        """잠재력 레벨 바에서 채워진 칸 수 반환 (색상 감지).
-        청록/파랑 계열 픽셀이 일정 비율 이상이면 '채워짐'으로 판단.
-        바를 POTENTIAL_BAR_TOTAL 구간으로 나눠 각 구간 독립 판단.
+        """잠재력 바에서 총 칸 수 반환 (채워진 칸 + 빈 칸 합계).
+        바를 POTENTIAL_BAR_TOTAL 구간으로 나눠 각 구간에
+        슬롯(밝은 픽셀)이 존재하는지 판단.
+        배경은 어둡고 슬롯(파란/회색 모두)은 배경보다 밝음.
         """
         n = POTENTIAL_BAR_TOTAL   # 4
         if crop is None or crop.size == 0:
@@ -553,12 +554,10 @@ class CalibrationGUI:
         if w == 0 or h == 0:
             return 0
 
-        # HSV 변환 후 청록/파랑 마스크
-        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        # 청록색: H 80~110 (OpenCV H 범위 0~179)
-        mask = cv2.inRange(hsv,
-                           np.array([75, 80, 80]),
-                           np.array([115, 255, 255]))
+        # 그레이스케일 → 밝은 픽셀 마스크 (슬롯 존재 감지)
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        # 어두운 배경(~30 이하) 제외, 슬롯은 60+ 이상
+        _, mask = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
 
         count = 0
         seg_w = max(1, w // n)
@@ -567,7 +566,7 @@ class CalibrationGUI:
             x_end   = x_start + seg_w if i < n - 1 else w
             seg = mask[:, x_start:x_end]
             ratio = np.count_nonzero(seg) / (seg.size or 1)
-            if ratio > 0.05:   # 5% 이상 채색 = 채워진 칸
+            if ratio > 0.08:   # 8% 이상 밝은 픽셀 = 슬롯 있음
                 count += 1
         return count
 
@@ -650,12 +649,11 @@ class CalibrationGUI:
                         self.extract_results[key] = '__compute__'
                         continue
 
-                    # ─── *_bar: 잠재력 색상 감지 (OCR 아님) ──────────────────────
+                    # ─── *_bar: 잠재력 총 칸 수 (밝기 감지) ──────────────────────
                     if key.endswith('_bar'):
                         count = self._count_potential_bar(crop)
-                        display = f"{count} / {POTENTIAL_BAR_TOTAL}"
                         self.extract_results[key] = str(count)
-                        print(f"  {key:<22} : {display}")
+                        print(f"  {key:<22} : {count}")
                         continue
 
                     # ─── 일반 텍스트 영역: OCR ──────────────────────────
