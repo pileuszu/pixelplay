@@ -18,6 +18,7 @@ CPBV 골든 글러브 투수 정보 자동 추출기
 
 import cv2
 import re
+import difflib
 import sys
 import os
 import json
@@ -269,10 +270,20 @@ def extract_pitcher_p1(frame, regions=None):
     """투수 Page 1: 이름, 오버롤, 포지션, 팀, 능력치 6종"""
     r = regions or PITCHER_P1
 
-    # 이름
+    # 이름: calibrate_gui.py와 동일한 정제 로직 (연도 마커 + 그림자 중복 제거)
     name_raw = ocr_text(frame, r['name_area'])
-    name_m = re.search(r'[\uAC00-\uD7A3]{2,5}', name_raw)
-    name = name_m.group() if name_m else name_raw.strip()
+    nc = re.sub(r"^[^\w\uAC00-\uD7A3']+", '', name_raw)  # 앞쪽 쓰레기
+    m_year = re.search(r"'\d{2}", nc)  # '25 같은 연도 마커
+    if m_year:
+        nc = nc[:m_year.end()]
+    else:
+        mid = len(nc) // 2
+        if mid >= 2:
+            first, second = nc[:mid], nc[mid:]
+            ratio = difflib.SequenceMatcher(None, first, second).ratio()
+            if ratio >= 0.5:
+                nc = first
+    name = nc.strip()
 
     # 오버롤
     overall = ocr_number(frame, r['overall_area'])
