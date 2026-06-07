@@ -848,11 +848,14 @@ class CalibrationGUI:
                                     cur_zone, seg_start = z, xi
                             if cur_zone != 0:
                                 segments.append((cur_zone, seg_start, bw))
-                            # 전체 채움 폭 계산 + 각 구간 비율
+                            # 전체 채움 폭 계산 + 노이즈 필터(3% 미만 제거) + 구간 비율
+                            total_filled = sum(e - s for _, s, e in segments)
+                            segments = [(z, s, e) for z, s, e in segments
+                                        if (e - s) / max(total_filled, 1) >= 0.03]
                             total_filled = sum(e - s for _, s, e in segments)
                             seg_count = len(segments)
                             ratios = [round((e - s) / max(total_filled, 1), 3) for _, s, e in segments]
-                            role = {5: 'CP', 4: 'RP', 3: 'SP'}.get(seg_count, f'?')
+                            role = {5: 'CP', 4: 'RP', 3: 'SP'}.get(seg_count, '?')
                             ratios_str = ' '.join(str(r) for r in ratios)
                             self.extract_results['stamina_bar_detail'] = f"{seg_count}:{ratios_str}"
                             print(f"  {'stamina_bar_detail':<22} : {seg_count}구간({role})  비율=[{ratios_str}]")
@@ -893,21 +896,26 @@ class CalibrationGUI:
                             row_bounds.append((prev, ph))
 
                             for row_y1, row_y2 in row_bounds:
-                                if row_y2 - row_y1 < 10:
+                                if row_y2 - row_y1 < 8:
                                     continue
                                 row_crop = pcrop[row_y1:row_y2, :]
                                 rh, rw = row_crop.shape[:2]
-                                # 각 행을 3배 upscale → OCR
-                                scale = max(3, 200 // max(rh, 1))
-                                row_up = cv2.resize(row_crop, (rw*scale, rh*scale),
-                                                    interpolation=cv2.INTER_CUBIC)
-                                row_texts = _ocr_crop(row_up)
-                                row_raw = ' '.join(t for t, _ in row_texts) if row_texts else ''
-                                found = _re2.findall(
-                                    r'([\uAC00-\uD7A3]{2,})\s*([SABCDsabcd][+\-]?)',
-                                    row_raw
-                                )
-                                pairs.extend(found)
+                                # 각 행을 좌/우 절반으로 나눠 개별 OCR (2열 레이아웃 대응)
+                                half = rw // 2
+                                for hcrop in [row_crop[:, :half], row_crop[:, half:]]:
+                                    if hcrop.shape[1] < 5:
+                                        continue
+                                    hh, hw = hcrop.shape[:2]
+                                    scale = max(3, 200 // max(hh, 1))
+                                    hup = cv2.resize(hcrop, (hw*scale, hh*scale),
+                                                     interpolation=cv2.INTER_CUBIC)
+                                    htexts = _ocr_crop(hup)
+                                    hraw = ' '.join(t for t, _ in htexts) if htexts else ''
+                                    found = _re2.findall(
+                                        r'([\uAC00-\uD7A3]{2,})\s*([SABCDsabcd][+\-]?)',
+                                        hraw
+                                    )
+                                    pairs.extend(found)
 
                     pitches_str = '  '.join(f"{n}:{g.upper()}" for n, g in pairs)
                     self.extract_results['pitches_area'] = pitches_str
