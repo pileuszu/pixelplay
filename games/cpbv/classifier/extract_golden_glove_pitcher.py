@@ -497,9 +497,18 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             mouse.click_ui('next_page')
             time.sleep(page_wait)
 
-        frame = stream.get_latest()
+        # P2: 픽셀 샘플링 - 전환 완료 대기 후 추출
         print(f"[{idx+1}] ── P2 추출 중...")
-        p2 = extract_pitcher_p2(frame)
+        for attempt in range(3):
+            frame = stream.get_latest()
+            p2 = extract_pitcher_p2(frame)
+            vals = list(p2.values())
+            # 모두 같은 값이면 잘못된 페이지 가능성 → 재시도
+            if vals and len(set(vals)) > 1:
+                break
+            msg = f"    [!] P2 값 일관성 없음({vals}), 재시도 ({attempt+1}/3)..."
+            print(msg)
+            time.sleep(page_wait)
         print(f"    잠재력={p2}")
 
         # ── P2 → P3 ──────────────────────────────────────
