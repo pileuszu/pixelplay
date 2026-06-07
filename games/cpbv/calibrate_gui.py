@@ -1,17 +1,14 @@
 """
 CPBV 좌표 보정 GUI (인터랙티브)
 
-사용법:
-  python games/cpbv/calibrate_gui.py
-
 조작:
   마우스 드래그       : 영역 이동
   모서리 핸들 드래그  : 영역 리사이즈
-  클릭 포인트 드래그  : 버튼 위치 이동
   N / TAB             : 다음 모드
   P                   : 이전 모드
   R                   : 프레임 새로고침
   L                   : 라이브 모드 토글
+  A                   : OCR 자동 영역 감지
   S                   : 저장 (config_override.json)
   Q / ESC             : 종료
 """
@@ -20,8 +17,39 @@ import sys
 import os
 import json
 import copy
+import time
+import threading
+import socket
 import numpy as np
 import argparse
+
+# PIL for Korean text rendering
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    PIL_AVAILABLE = True
+    # Windows Korean font
+    _FONT_PATHS = [
+        "C:/Windows/Fonts/malgun.ttf",          # 맑은 고딕 (Windows)
+        "C:/Windows/Fonts/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",  # Linux
+    ]
+    _FONT_CACHE = {}
+    def _get_font(size=13):
+        if size in _FONT_CACHE:
+            return _FONT_CACHE[size]
+        for path in _FONT_PATHS:
+            if os.path.exists(path):
+                try:
+                    f = ImageFont.truetype(path, size)
+                    _FONT_CACHE[size] = f
+                    return f
+                except:
+                    pass
+        f = ImageFont.load_default()
+        _FONT_CACHE[size] = f
+        return f
+except ImportError:
+    PIL_AVAILABLE = False
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from games.cpbv.config_cpbv import (
@@ -46,77 +74,192 @@ MODES = [
     ('pitcher_p2', '투수 P2 - 스킬'),
     ('pitcher_p3', '투수 P3 - 체력+구종'),
 ]
-
 MODE_COLORS = {
-    'batter_p1':  (0, 220, 180),
-    'batter_p2':  (0, 165, 255),
-    'batter_p3':  (0, 80,  255),
-    'pitcher_p1': (255, 200,  0),
-    'pitcher_p2': (200, 100, 50),
-    'pitcher_p3': (180,  50, 255),
+    'batter_p1':  (0, 220, 180), 'batter_p2':  (0, 165, 255), 'batter_p3': (0, 80, 255),
+    'pitcher_p1': (255, 200,  0), 'pitcher_p2': (200, 100, 50),'pitcher_p3':(180, 50,255),
 }
-
 CLICK_COLORS = {
-    'next_player': (50, 255, 50),
-    'prev_player': (50, 200, 50),
-    'next_page':   (50, 220, 255),
-    'prev_page':   (50, 170, 200),
-    'close':       (50,  50, 255),
+    'next_player':(50,255,50), 'prev_player':(50,200,50),
+    'next_page':(50,220,255),  'prev_page':(50,170,200), 'close':(50,50,255),
 }
+HANDLE_R = 6
+DOT_R    = 8
 
-HANDLE_R = 6   # 코너 핸들 반지름
-DOT_R    = 8   # 클릭 포인트 반지름
+
+# ─── 마우스 클라이언트 ────────────────────────────────────────────────
+class MouseClient:
+    def __init__(self, host, port):
+        self.host = host; self.port = port
+        self.sock = None; self.connected = False
+        self._try_connect()
+
+    def _try_connect(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((self.host, self.port))
+            self.sock = s; self.connected = True
+            print(f"[+] 마우스 서버 연결: {self.host}:{self.port}")
+        except Exception as e:
+            print(f"[!] 마우스 연결 실패: {e}")
+            self.connected = False
+
+    def _send(self, cmd):
+        if not self.sock: return
+        try:
+            self.sock.settimeout(2.0)
+            self.sock.sendall((json.dumps(cmd) + '\n').encode())
+            self.sock.recv(1024)
+        except:
+            self.connected = False; self.sock = None
+
+    def click_ratio(self, rx, ry, focus_first=True):
+        if not self.connected: self._try_connect()
+        abs_x = int(WINDOW_LEFT + rx * WINDOW_WIDTH)
+        abs_y = int(WINDOW_TOP  + ry * WINDOW_HEIGHT)
+        if focus_first:
+            fx = int(WINDOW_LEFT + 0.5 * WINDOW_WIDTH)
+            fy = int(WINDOW_TOP  + 0.1 * WINDOW_HEIGHT)
+            self._send({'action': 'click', 'x': fx, 'y': fy})
+            time.sleep(0.3)
+        self._send({'action': 'click', 'x': abs_x, 'y': abs_y})
+        return abs_x, abs_y
+
+
+# ─── OCR 자동 감지 규칙 ──────────────────────────────────────────────
+# {찾을 텍스트: {모드: (region_key, bbox_기준_x비율_오프셋, y오프셋, w, h)}}
+# 오프셋은 감지된 텍스트 박스의 (x1, y1) 기준 (게임창 비율 단위)
+OCR_RULES = {
+    '세트덱': {
+        'batter_p1':  ('setdeck_area',   0.28, -0.005, 0.12, 0.05),
+        'pitcher_p1': ('setdeck_area',   0.28, -0.005, 0.12, 0.05),
+    },
+    '평균': {
+        'batter_p1':  ('launch_area',    0.45,  0.005, 0.14, 0.05),
+    },
+    '현재': {
+        'pitcher_p1': ('stamina_bar',    0.25,  0.005, 0.45, 0.03),
+    },
+    '파워': {
+        'batter_p1':  ('stat_power',     0.28,  0.002, 0.14, 0.04),
+    },
+    '인내': {
+        'batter_p1':  ('stat_endure',    0.28,  0.002, 0.14, 0.04),
+    },
+    '정확': {
+        'batter_p1':  ('stat_contact',   0.28,  0.002, 0.14, 0.04),
+    },
+    '주루': {
+        'batter_p1':  ('stat_run',       0.28,  0.002, 0.14, 0.04),
+    },
+    '선구': {
+        'batter_p1':  ('stat_eye',       0.28,  0.002, 0.14, 0.04),
+    },
+    '구속': {
+        'pitcher_p1': ('stat_speed',     0.28,  0.002, 0.14, 0.04),
+    },
+    '제구': {
+        'pitcher_p1': ('stat_control',   0.28,  0.002, 0.14, 0.04),
+    },
+    '변화': {
+        'pitcher_p1': ('stat_break',     0.28,  0.002, 0.14, 0.04),
+    },
+    '지구력': {
+        'pitcher_p1': ('stat_stamina',   0.28,  0.002, 0.14, 0.04),
+    },
+    '구위': {
+        'pitcher_p1': ('stat_stuff',     0.28,  0.002, 0.14, 0.04),
+    },
+    '수비': {
+        'batter_p1':  ('stat_defense',   0.28,  0.002, 0.14, 0.04),
+        'pitcher_p1': ('stat_defense',   0.28,  0.002, 0.14, 0.04),
+    },
+    '핫': {
+        'batter_p3':  ('hotzone_grid',   -0.05, 0.03,  0.70, 0.30),
+    },
+    '구종': {
+        'pitcher_p3': ('pitches_area',   -0.05, 0.03,  0.85, 0.32),
+    },
+    '체력': {
+        'pitcher_p3': ('stamina_bar_detail', 0.10, 0.03, 0.75, 0.04),
+    },
+}
 
 
 # ─── 좌표 변환 ────────────────────────────────────────────────────────
 def r2s(rx, ry, rw=0, rh=0):
-    """게임창 비율 → 스트림 픽셀"""
     sx = STREAM_GAME_X1 + rx * GAME_W
     sy = STREAM_GAME_Y1 + ry * GAME_H
     return int(sx), int(sy), int(rw * GAME_W), int(rh * GAME_H)
 
-def s2r(sx, sy):
-    """스트림 픽셀 → 게임창 비율"""
-    rx = (sx - STREAM_GAME_X1) / max(GAME_W, 1)
-    ry = (sy - STREAM_GAME_Y1) / max(GAME_H, 1)
-    return round(rx, 4), round(ry, 4)
-
 def rect_px(rx, ry, rw, rh):
-    """비율 4-tuple → (x1,y1,x2,y2) 픽셀"""
     sx, sy, sw, sh = r2s(rx, ry, rw, rh)
-    return sx, sy, sx + sw, sy + sh
+    return sx, sy, sx+sw, sy+sh
 
 
-# ─── GUI 클래스 ───────────────────────────────────────────────────────
+# ─── PIL 텍스트 렌더링 ────────────────────────────────────────────────
+def draw_text_pil(img, lines_with_info, padding=4):
+    """
+    img: BGR numpy array
+    lines_with_info: list of (text, x, y, size, color_bgr, bg_color_bgr_or_None)
+    """
+    if not PIL_AVAILABLE:
+        # fallback: ASCII only
+        for (text, x, y, size, color, bg) in lines_with_info:
+            scale = size / 25
+            cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1)
+        return img
+
+    pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil)
+
+    for (text, x, y, size, color_bgr, bg_bgr) in lines_with_info:
+        font = _get_font(size)
+        rgb = (color_bgr[2], color_bgr[1], color_bgr[0])
+        if bg_bgr is not None:
+            try:
+                bbox = draw.textbbox((x, y), text, font=font)
+            except AttributeError:
+                tw, th = draw.textsize(text, font=font)
+                bbox = (x, y, x+tw, y+th)
+            draw.rectangle([bbox[0]-padding, bbox[1]-2, bbox[2]+padding, bbox[3]+2],
+                           fill=(bg_bgr[2], bg_bgr[1], bg_bgr[0]))
+        draw.text((x, y), text, font=font, fill=rgb)
+
+    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+
+
+# ─── GUI ─────────────────────────────────────────────────────────────
 class CalibrationGUI:
     def __init__(self, stream_url):
         self.stream_url = stream_url
         self.cap = None
+        self.frame = None
+        self.live = False
 
-        # 편집 가능한 region 딕셔너리 (비율값)
         self.regions = {
-            'batter_p1':  dict(BATTER_P1),
-            'batter_p2':  dict(BATTER_P2),
-            'batter_p3':  dict(BATTER_P3),
-            'pitcher_p1': dict(PITCHER_P1),
-            'pitcher_p2': dict(PITCHER_P2),
-            'pitcher_p3': dict(PITCHER_P3),
+            'batter_p1':  dict(BATTER_P1),  'batter_p2':  dict(BATTER_P2),
+            'batter_p3':  dict(BATTER_P3),  'pitcher_p1': dict(PITCHER_P1),
+            'pitcher_p2': dict(PITCHER_P2), 'pitcher_p3': dict(PITCHER_P3),
         }
         self.click_pts = dict(UI)
-
-        # 저장된 오버라이드 로드
         self._load_override()
 
-        self.mode_idx = 0
-        self.frame    = None
-        self.live     = False
+        self.mode_idx  = 0
+        self.selected  = None
+        self.drag_start= None
+        self.drag_type = None
+        self.drag_orig = None
+        self.mx = self.my = 0
 
-        # 드래그 상태
-        self.selected   = None   # ('region', mode, key) | ('click', key) | None
-        self.drag_start = None   # (x, y) 시작점
-        self.drag_type  = None   # 'move' | 'tl' | 'tr' | 'bl' | 'br'
-        self.drag_orig  = None   # 드래그 시작 시의 원본 값
-        self.mx, self.my = 0, 0
+        # OCR 관련
+        self.ocr_boxes  = []
+        self.ocr_status = ''
+        self.ocr_running= False
+
+        # 마우스 클라이언트
+        self.mouse = MouseClient(MOUSE_HOST, MOUSE_PORT) if MOUSE_HOST else None
+        self.last_click_label = ''
 
     # ── 속성 ──────────────────────────────────────────────────────────
     @property
@@ -129,21 +272,19 @@ class CalibrationGUI:
 
     # ── 오버라이드 I/O ────────────────────────────────────────────────
     def _load_override(self):
-        if not os.path.exists(OVERRIDE_PATH):
-            return
+        if not os.path.exists(OVERRIDE_PATH): return
         with open(OVERRIDE_PATH, encoding='utf-8') as f:
             data = json.load(f)
-        for mode_key, rgs in data.get('regions', {}).items():
-            if mode_key in self.regions:
-                self.regions[mode_key].update({k: tuple(v) for k, v in rgs.items()})
+        for mk, rgs in data.get('regions', {}).items():
+            if mk in self.regions:
+                self.regions[mk].update({k: tuple(v) for k, v in rgs.items()})
         self.click_pts.update({k: tuple(v) for k, v in data.get('click_pts', {}).items()})
-        print(f"[+] 오버라이드 로드: {OVERRIDE_PATH}")
+        print(f"[+] 오버라이드 로드됨")
 
     def save(self):
         data = {
-            'regions':    {m: {k: list(v) for k, v in rgs.items()}
-                           for m, rgs in self.regions.items()},
-            'click_pts':  {k: list(v) for k, v in self.click_pts.items()},
+            'regions':   {m: {k: list(v) for k, v in rgs.items()} for m, rgs in self.regions.items()},
+            'click_pts': {k: list(v) for k, v in self.click_pts.items()},
         }
         with open(OVERRIDE_PATH, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -152,41 +293,32 @@ class CalibrationGUI:
     # ── 스트림 ────────────────────────────────────────────────────────
     def _connect(self):
         self.cap = cv2.VideoCapture(self.stream_url)
-        if not self.cap.isOpened():
-            print(f"[!] 스트림 연결 실패: {self.stream_url}")
-            return False
-        print(f"[+] 스트림 연결: {self.stream_url}")
-        return True
+        ok = self.cap.isOpened()
+        print(f"[{'+'if ok else'!'}] 스트림 {'연결' if ok else '실패'}: {self.stream_url}")
+        return ok
 
     def grab_frame(self):
-        if self.cap is None or not self.cap.isOpened():
-            return False
+        if not (self.cap and self.cap.isOpened()): return False
         ret, frame = self.cap.read()
-        if ret:
-            self.frame = frame.copy()
+        if ret: self.frame = frame.copy()
         return ret
 
     # ── 히트 테스트 ───────────────────────────────────────────────────
     def _corner_hit(self, mx, my, x1, y1, x2, y2):
         for tag, (cx, cy) in [('tl',(x1,y1)),('tr',(x2,y1)),('bl',(x1,y2)),('br',(x2,y2))]:
-            if abs(mx - cx) <= HANDLE_R + 3 and abs(my - cy) <= HANDLE_R + 3:
+            if abs(mx-cx) <= HANDLE_R+3 and abs(my-cy) <= HANDLE_R+3:
                 return tag
         return None
 
     def _find_hit(self, mx, my):
-        """마우스 위치에 있는 요소 탐색"""
-        # 클릭 포인트
         for key, (rx, ry) in self.click_pts.items():
             sx, sy, _, _ = r2s(rx, ry)
-            if abs(mx - sx) <= DOT_R + 2 and abs(my - sy) <= DOT_R + 2:
+            if abs(mx-sx) <= DOT_R+2 and abs(my-sy) <= DOT_R+2:
                 return ('click', key), 'move'
-
-        # 현재 모드 영역 (코너 우선)
         for key, region in self.regions[self.mode].items():
             x1, y1, x2, y2 = rect_px(*region)
             corner = self._corner_hit(mx, my, x1, y1, x2, y2)
-            if corner:
-                return ('region', self.mode, key), corner
+            if corner: return ('region', self.mode, key), corner
         for key, region in self.regions[self.mode].items():
             x1, y1, x2, y2 = rect_px(*region)
             if x1 <= mx <= x2 and y1 <= my <= y2:
@@ -198,39 +330,111 @@ class CalibrationGUI:
         self.mx, self.my = x, y
 
         if event == cv2.EVENT_LBUTTONDOWN:
-            sel, dtype = self._find_hit(x, y)
-            self.selected   = sel
-            self.drag_type  = dtype
+            self.selected, self.drag_type = self._find_hit(x, y)
             self.drag_start = (x, y)
-            if sel:
-                if sel[0] == 'click':
-                    self.drag_orig = self.click_pts[sel[1]]
+            if self.selected:
+                if self.selected[0] == 'click':
+                    self.drag_orig = self.click_pts[self.selected[1]]
                 else:
-                    self.drag_orig = self.regions[sel[1]][sel[2]]
+                    self.drag_orig = self.regions[self.selected[1]][self.selected[2]]
+
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            # 우클릭: 클릭 포인트 위에서 클릭 테스트
+            hit, _ = self._find_hit(x, y)
+            if hit and hit[0] == 'click':
+                key = hit[1]
+                rx, ry = self.click_pts[key]
+                self._test_click(key, rx, ry)
 
         elif event == cv2.EVENT_MOUSEMOVE and self.drag_start and self.selected:
-            dx = x - self.drag_start[0]
-            dy = y - self.drag_start[1]
-            drx = dx / max(GAME_W, 1)
-            dry = dy / max(GAME_H, 1)
+            dx, dy = x - self.drag_start[0], y - self.drag_start[1]
+            drx, dry = dx / max(GAME_W,1), dy / max(GAME_H,1)
 
             if self.selected[0] == 'click':
-                key = self.selected[1]
                 ox, oy = self.drag_orig
-                self.click_pts[key] = (round(ox + drx, 4), round(oy + dry, 4))
-
-            elif self.selected[0] == 'region':
+                self.click_pts[self.selected[1]] = (round(ox+drx,4), round(oy+dry,4))
+            else:
                 mode, key = self.selected[1], self.selected[2]
                 orx, ory, orw, orh = self.drag_orig
                 t = self.drag_type
-                if   t == 'move': self.regions[mode][key] = (round(orx+drx,4), round(ory+dry,4), orw, orh)
-                elif t == 'tl':   self.regions[mode][key] = (round(orx+drx,4), round(ory+dry,4), round(orw-drx,4), round(orh-dry,4))
-                elif t == 'tr':   self.regions[mode][key] = (orx, round(ory+dry,4), round(orw+drx,4), round(orh-dry,4))
-                elif t == 'bl':   self.regions[mode][key] = (round(orx+drx,4), ory, round(orw-drx,4), round(orh+dry,4))
-                elif t == 'br':   self.regions[mode][key] = (orx, ory, round(orw+drx,4), round(orh+dry,4))
+                if   t=='move': self.regions[mode][key]=(round(orx+drx,4),round(ory+dry,4),orw,orh)
+                elif t=='tl':   self.regions[mode][key]=(round(orx+drx,4),round(ory+dry,4),round(orw-drx,4),round(orh-dry,4))
+                elif t=='tr':   self.regions[mode][key]=(orx,round(ory+dry,4),round(orw+drx,4),round(orh-dry,4))
+                elif t=='bl':   self.regions[mode][key]=(round(orx+drx,4),ory,round(orw-drx,4),round(orh+dry,4))
+                elif t=='br':   self.regions[mode][key]=(orx,ory,round(orw+drx,4),round(orh+dry,4))
 
         elif event == cv2.EVENT_LBUTTONUP:
             self.drag_start = None
+
+    def _test_click(self, label, rx, ry):
+        """게임 PC에 클릭 전송"""
+        if not self.mouse:
+            print("[!] 마우스 클라이언트 없음")
+            return
+        focus = label in ('next_player', 'prev_player')
+        ax, ay = self.mouse.click_ratio(rx, ry, focus_first=focus)
+        self.last_click_label = f"{label} → ({ax},{ay})"
+        print(f"  [클릭] {self.last_click_label}")
+
+
+    # ── OCR 자동 감지 ─────────────────────────────────────────────────
+    def start_ocr_detect(self):
+        if self.ocr_running:
+            print("[!] OCR 이미 실행 중")
+            return
+        if self.frame is None:
+            print("[!] 먼저 R키로 프레임 캡처")
+            return
+
+        def _run():
+            self.ocr_running = True
+            self.ocr_status = 'OCR 실행 중...'
+            self.ocr_boxes = []
+            try:
+                import easyocr
+                reader = easyocr.Reader(['ko', 'en'], verbose=False)
+                gf = self.frame[STREAM_GAME_Y1:STREAM_GAME_Y2,
+                                STREAM_GAME_X1:STREAM_GAME_X2]
+                results = reader.readtext(gf, detail=1)
+
+                detected = []
+                auto_set = []
+
+                for bbox, text, conf in results:
+                    if conf < 0.3: continue
+                    x1g = int(bbox[0][0]); y1g = int(bbox[0][1])
+                    x2g = int(bbox[2][0]); y2g = int(bbox[2][1])
+                    # 스트림 픽셀로 변환 (게임창 오프셋 추가)
+                    detected.append((x1g, y1g, x2g, y2g, text, conf))
+
+                    # 규칙 매칭
+                    for keyword, mode_map in OCR_RULES.items():
+                        if keyword in text and self.mode in mode_map:
+                            key, ox, oy, rw, rh = mode_map[self.mode]
+                            rx_label = x1g / max(GAME_W, 1)
+                            ry_label = y1g / max(GAME_H, 1)
+                            new_rx = round(rx_label + ox, 4)
+                            new_ry = round(ry_label + oy, 4)
+                            self.regions[self.mode][key] = (new_rx, new_ry,
+                                                             round(rw,4), round(rh,4))
+                            auto_set.append(f"{key}: ({new_rx:.3f},{new_ry:.3f})")
+
+                self.ocr_boxes = detected
+                self.ocr_status = f"완료: {len(detected)}개 텍스트, {len(auto_set)}개 자동 설정"
+                for s in auto_set:
+                    print(f"  [자동] {s}")
+                print(f"[+] OCR: {self.ocr_status}")
+
+            except ImportError:
+                self.ocr_status = 'easyocr 없음 (pip install easyocr)'
+                print(f"[!] {self.ocr_status}")
+            except Exception as e:
+                self.ocr_status = f'오류: {e}'
+                print(f"[!] OCR 오류: {e}")
+            finally:
+                self.ocr_running = False
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── 렌더링 ────────────────────────────────────────────────────────
     def _draw(self):
@@ -238,101 +442,149 @@ class CalibrationGUI:
             img = self.frame.copy()
         else:
             img = np.zeros((STREAM_HEIGHT, STREAM_WIDTH, 3), dtype=np.uint8)
-            cv2.putText(img, "No frame - press R to capture",
-                        (STREAM_WIDTH//2 - 140, STREAM_HEIGHT//2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150,150,150), 1)
 
         h, w = img.shape[:2]
         color = MODE_COLORS[self.mode]
 
         # 게임창 경계
         cv2.rectangle(img, (STREAM_GAME_X1, STREAM_GAME_Y1),
-                           (STREAM_GAME_X2, STREAM_GAME_Y2), (80, 80, 80), 1)
+                           (STREAM_GAME_X2, STREAM_GAME_Y2), (80,80,80), 1)
 
-        # 영역 박스
+        # OCR 감지 박스 (반투명)
+        if self.ocr_boxes:
+            overlay = img.copy()
+            for (x1g, y1g, x2g, y2g, text, conf) in self.ocr_boxes:
+                sx1 = STREAM_GAME_X1 + x1g; sy1 = STREAM_GAME_Y1 + y1g
+                sx2 = STREAM_GAME_X1 + x2g; sy2 = STREAM_GAME_Y1 + y2g
+                cv2.rectangle(overlay, (sx1,sy1),(sx2,sy2),(0,255,150),1)
+            img = cv2.addWeighted(overlay, 0.6, img, 0.4, 0)
+
+        # 현재 모드 영역
         for key, region in self.regions[self.mode].items():
             x1, y1, x2, y2 = rect_px(*region)
             is_sel = (self.selected == ('region', self.mode, key))
-            c = (0, 255, 255) if is_sel else color
+            c = (0,255,255) if is_sel else color
             thick = 2 if is_sel else 1
-            cv2.rectangle(img, (x1, y1), (x2, y2), c, thick)
-            cv2.putText(img, key, (x1+2, max(y1-3, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, c, 1)
-            # 코너 핸들
-            for cx, cy in [(x1,y1),(x2,y1),(x1,y2),(x2,y2)]:
-                cv2.rectangle(img, (cx-HANDLE_R, cy-HANDLE_R),
-                                   (cx+HANDLE_R, cy+HANDLE_R), c, -1)
+            cv2.rectangle(img,(x1,y1),(x2,y2),c,thick)
+            for cx,cy in [(x1,y1),(x2,y1),(x1,y2),(x2,y2)]:
+                cv2.rectangle(img,(cx-HANDLE_R,cy-HANDLE_R),(cx+HANDLE_R,cy+HANDLE_R),c,-1)
 
         # 클릭 포인트
         for key, (rx, ry) in self.click_pts.items():
             sx, sy, _, _ = r2s(rx, ry)
             is_sel = (self.selected == ('click', key))
-            c = (0, 255, 255) if is_sel else CLICK_COLORS.get(key, (200,200,200))
-            cv2.circle(img, (sx, sy), DOT_R, c, -1)
-            cv2.circle(img, (sx, sy), DOT_R+2, (0,0,0), 1)
-            cv2.putText(img, key, (sx+10, sy+4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, c, 1)
+            c = (0,255,255) if is_sel else CLICK_COLORS.get(key,(200,200,200))
+            cv2.circle(img,(sx,sy),DOT_R,c,-1)
+            cv2.circle(img,(sx,sy),DOT_R+2,(0,0,0),1)
 
-        # ── HUD ────────────────────────────────────────────────────────
-        # 상단바
-        live_mark = "[LIVE]" if self.live else ""
-        hud = (f"[{self.mode_idx+1}/{len(MODES)}] {self.mode_label}  {live_mark}"
-               f"  |  N/TAB:다음  P:이전  R:새로고침  L:라이브  S:저장  Q:종료")
-        cv2.rectangle(img, (0, 0), (w, 20), (20, 20, 20), -1)
-        cv2.putText(img, hud, (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (230,230,230), 1)
+        # ── 텍스트 오버레이 (PIL) ─────────────────────────────────────
+        live_mark = '[라이브] ' if self.live else ''
+        ocr_mark  = f'  | {self.ocr_status}' if self.ocr_status else ''
 
-        # 하단바 (선택된 요소 좌표)
+        # 상단 HUD
+        hud_bg = (20,20,20)
+        cv2.rectangle(img,(0,0),(w,22),hud_bg,-1)
+
+        # 하단 HUD
+        if self.selected:
+            cv2.rectangle(img,(0,h-22),(w,h),hud_bg,-1)
+
+        text_items = []
+
+        # 마우스 연결 상태
+        conn_color = (50,255,50) if (self.mouse and self.mouse.connected) else (50,50,255)
+        conn_text  = 'MOUSE:OK' if (self.mouse and self.mouse.connected) else 'MOUSE:X'
+
+        # 상단 텍스트
+        hud_text = (f"{live_mark}[{self.mode_idx+1}/{len(MODES)}] {self.mode_label}"
+                    f"  |  N:다음  P:이전  R:새로고침  L:라이브  A:OCR  S:저장"
+                    f"  |  우클릭/T:클릭테스트  Q:종료"
+                    f"{ocr_mark}")
+        text_items.append((hud_text, 4, 3, 13, (230,230,230), None))
+        # 연결 상태 (우상단)
+        text_items.append((conn_text, w-80, 3, 12, conn_color, None))
+        # 마지막 클릭 정보
+        if self.last_click_label:
+            text_items.append((f'클릭: {self.last_click_label}', 4, 25, 11, (200,255,100), None))
+
+        # 영역 라벨
+        for key, region in self.regions[self.mode].items():
+            x1, y1, x2, y2 = rect_px(*region)
+            is_sel = (self.selected == ('region', self.mode, key))
+            c = (0,255,255) if is_sel else color
+            text_items.append((key, x1+2, max(y1-14, 2), 11, c, None))
+
+        # 클릭 포인트 라벨
+        for key, (rx, ry) in self.click_pts.items():
+            sx, sy, _, _ = r2s(rx, ry)
+            c = (0,255,255) if (self.selected == ('click', key)) else CLICK_COLORS.get(key,(200,200,200))
+            text_items.append((key, sx+10, sy-5, 11, c, None))
+
+        # OCR 박스 텍스트
+        for (x1g, y1g, x2g, y2g, text, conf) in self.ocr_boxes:
+            sx1 = STREAM_GAME_X1 + x1g; sy1 = STREAM_GAME_Y1 + y1g
+            text_items.append((f"{text}({conf:.0%})", sx1, max(sy1-12,0), 10, (100,255,180), None))
+
+        # 하단 선택 정보
         if self.selected:
             if self.selected[0] == 'click':
                 val = self.click_pts[self.selected[1]]
                 info = f"  [{self.selected[1]}]  rx={val[0]:.4f}  ry={val[1]:.4f}"
             else:
                 val = self.regions[self.selected[1]][self.selected[2]]
-                info = (f"  [{self.selected[2]}]  "
-                        f"rx={val[0]:.4f}  ry={val[1]:.4f}  "
-                        f"rw={val[2]:.4f}  rh={val[3]:.4f}")
-            cv2.rectangle(img, (0, h-20), (w, h), (20, 20, 20), -1)
-            cv2.putText(img, info, (4, h-5), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (255,255,100), 1)
+                info = (f"  [{self.selected[2]}]  rx={val[0]:.4f}  ry={val[1]:.4f}"
+                        f"  rw={val[2]:.4f}  rh={val[3]:.4f}")
+            text_items.append((info, 4, h-19, 13, (255,255,100), None))
 
+        img = draw_text_pil(img, text_items)
         return img
 
     # ── 메인 루프 ─────────────────────────────────────────────────────
     def run(self):
-        if not self._connect():
-            return
+        if not self._connect(): return
 
         win = 'CPBV Calibration GUI'
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win, STREAM_WIDTH, STREAM_HEIGHT)
         cv2.setMouseCallback(win, self.on_mouse)
 
-        # 초기 프레임
         self.grab_frame()
-        print("[*] GUI 시작. 드래그로 영역 조정 → S로 저장")
+        print("[*] GUI 시작  |  드래그: 영역 편집  |  A: OCR 자동감지  |  S: 저장")
 
         while True:
-            if self.live:
-                self.grab_frame()
-
+            if self.live: self.grab_frame()
             cv2.imshow(win, self._draw())
-            key = cv2.waitKey(16) & 0xFF   # ~60fps
+            key = cv2.waitKey(16) & 0xFF
 
-            if key in (ord('q'), 27):      # Q or ESC
-                break
-            elif key in (ord('n'), 9):     # N or TAB
-                self.mode_idx = (self.mode_idx + 1) % len(MODES)
+            if key in (ord('q'), 27):    break
+            elif key in (ord('n'), 9):
+                self.mode_idx = (self.mode_idx+1) % len(MODES)
+                self.ocr_boxes = []; self.ocr_status = ''
                 print(f"  → {self.mode_label}")
             elif key == ord('p'):
-                self.mode_idx = (self.mode_idx - 1) % len(MODES)
+                self.mode_idx = (self.mode_idx-1) % len(MODES)
+                self.ocr_boxes = []; self.ocr_status = ''
                 print(f"  → {self.mode_label}")
             elif key == ord('r'):
                 ok = self.grab_frame()
-                print(f"  {'프레임 갱신' if ok else '[!] 캡처 실패 - 스트림 확인'}")
+                print(f"  {'프레임 갱신' if ok else '[!] 캡처 실패'}")
             elif key == ord('l'):
                 self.live = not self.live
                 print(f"  라이브: {'ON' if self.live else 'OFF'}")
+            elif key == ord('a'):
+                self.start_ocr_detect()
             elif key == ord('s'):
                 self.save()
+            elif key == ord('t'):
+                # T: 선택된 클릭 포인트 테스트
+                if self.selected and self.selected[0] == 'click':
+                    k = self.selected[1]
+                    rx, ry = self.click_pts[k]
+                    self._test_click(k, rx, ry)
+                else:
+                    print("[!] 먼저 클릭 포인트(점)를 선택하세요")
+            elif key == ord('c'):
+                self.ocr_boxes = []; self.ocr_status = ''; self.last_click_label = ''
 
         self.cap.release()
         cv2.destroyAllWindows()
