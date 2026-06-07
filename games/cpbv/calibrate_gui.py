@@ -905,16 +905,20 @@ class CalibrationGUI:
                 # 이름 정제: 앞뒤 특수문자 + 그림자 중복 텍스트 제거
                 name_raw = self.extract_results.get('name_area', '')
                 if name_raw:
+                    import difflib as _diff
                     nc = _re.sub(r"^[^\w\uAC00-\uD7A3']+", '', name_raw)  # 앞쪽 쓰레기 제거
                     # 연도 마커('YY)가 있으면 첫 번째 것까지만 사용 (그림자 이중 텍스트 차단)
                     m_year = _re.search(r"'\d{2}", nc)
                     if m_year:
                         nc = nc[:m_year.end()]
                     else:
-                        # 연도 없으면 한글+영문 구간만 추출
-                        m_name = _re.search(r"[\uAC00-\uD7A3A-Za-z][\uAC00-\uD7A3A-Za-z\s]{1,15}", nc)
-                        if m_name:
-                            nc = m_name.group()
+                        # 연도 없는 이름: 절반 비교로 중복 감지
+                        mid = len(nc) // 2
+                        if mid >= 2:
+                            first, second = nc[:mid], nc[mid:]
+                            ratio = _diff.SequenceMatcher(None, first, second).ratio()
+                            if ratio >= 0.5:   # 50%+ 유사 = 중복으로 판단
+                                nc = first
                     self.extract_results['name_area'] = nc.strip()
 
                 # 종합 요약 출력
