@@ -1100,6 +1100,36 @@ class CalibrationGUI:
             for cx,cy in [(x1,y1),(x2,y1),(x1,y2),(x2,y2)]:
                 cv2.rectangle(img,(cx-HANDLE_R,cy-HANDLE_R),(cx+HANDLE_R,cy+HANDLE_R),c,-1)
 
+        # pitcher_p3: pitches_area 내부 10분할 오버레이 (이름5 + 배지5)
+        if self.mode == 'pitcher_p3' and 'pitches_area' in self.regions[self.mode]:
+            pr = self.regions[self.mode]['pitches_area']
+            px1, py1, px2, py2 = rect_px(*pr)
+            pw, ph2 = px2 - px1, py2 - py1
+            N_ROWS, N_COLS = 3, 2
+            NAME_W, BADGE_X = 0.75, 0.82
+            dim_c = (180, 50, 255)   # 연보라 (pitcher_p3 색)
+            for r in range(N_ROWS):
+                for c2 in range(N_COLS):
+                    # 슬롯 번호 (5개만)
+                    slot_i = r * N_COLS + c2
+                    if slot_i >= 5:
+                        break
+                    cx1 = px1 + int(pw * c2 / N_COLS)
+                    cx2 = px1 + int(pw * (c2 + 1) / N_COLS)
+                    cy1 = py1 + int(ph2 * r / N_ROWS)
+                    cy2 = py1 + int(ph2 * (r + 1) / N_ROWS)
+                    cw = cx2 - cx1
+                    # 이름/배지 경계선
+                    name_edge = cx1 + int(cw * NAME_W)
+                    badge_edge = cx1 + int(cw * BADGE_X)
+                    cv2.line(img, (name_edge, cy1), (name_edge, cy2), dim_c, 1)
+                    cv2.line(img, (badge_edge, cy1), (badge_edge, cy2), (100, 200, 255), 1)
+                    # 슬롯 경계 (행/열)
+                    cv2.rectangle(img, (cx1, cy1), (cx2, cy2), dim_c, 1)
+                    # 슬롯 번호 라벨
+                    cv2.putText(img, f'P{slot_i+1}', (cx1+3, cy1+13),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.35, dim_c, 1)
+
         # 클릭 포인트
         for key, (rx, ry) in self.click_pts.items():
             sx, sy, _, _ = r2s(rx, ry)
