@@ -81,10 +81,10 @@ GAME_H = STREAM_GAME_Y2 - STREAM_GAME_Y1
 
 MODES = [
     ('batter_p1',  '타자 P1 - 능력치'),
-    ('batter_p2',  '타자 P2 - 스킬'),
+    ('batter_p2',  '타자 P2 - 잠재력'),
     ('batter_p3',  '타자 P3 - 핫콜드존'),
     ('pitcher_p1', '투수 P1 - 능력치'),
-    ('pitcher_p2', '투수 P2 - 스킬'),
+    ('pitcher_p2', '투수 P2 - 잠재력'),
     ('pitcher_p3', '투수 P3 - 체력+구종'),
 ]
 MODE_COLORS = {
