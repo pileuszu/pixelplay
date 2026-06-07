@@ -63,8 +63,10 @@ from games.cpbv.config_cpbv import (
     HOTZONE_ROWS, HOTZONE_COLS,
 )
 
-OVERRIDE_PATH = os.path.join(os.path.dirname(__file__), 'config_override.json')
-TEAM_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'team_templates')
+OVERRIDE_PATH        = os.path.join(os.path.dirname(__file__), 'config_override.json')
+TEAM_TEMPLATES_DIR   = os.path.join(os.path.dirname(__file__), 'team_templates')
+TEAM_TEMPLATES_BATTER  = os.path.join(TEAM_TEMPLATES_DIR, 'batter')
+TEAM_TEMPLATES_PITCHER = os.path.join(TEAM_TEMPLATES_DIR, 'pitcher')
 
 TEAMS = [
     ('1', '두산'), ('2', '삼성'), ('3', '한화'), ('4', '롯데'),
@@ -587,24 +589,34 @@ class CalibrationGUI:
         threading.Thread(target=_run, daemon=True).start()
 
     # ── OCR 영역별 추출 테스트 (E키) ─────────────────────────────────
-    def _match_team_logo(self, crop):
-        """스트림 필레임 크롭에 저장된 팀 로고 템플릿 매칭"""
-        tmpl_dir = os.path.join(os.path.dirname(__file__), 'team_templates')
-        if not os.path.exists(tmpl_dir):
-            return None, 0.0, "team_templates 폴더 없음"
+    def _match_team_logo(self, crop, mode=None):
+        """스트림 프레임 크롭에 저장된 팀 로고 템플릿 매칭
+        mode에 따라 batter/ 또는 pitcher/ 서브폴더 우선 탐색 → 없으면 루트 탐색
+        """
+        if mode and mode.startswith('pitcher'):
+            search_dirs = [TEAM_TEMPLATES_PITCHER, TEAM_TEMPLATES_DIR]
+        else:
+            search_dirs = [TEAM_TEMPLATES_BATTER, TEAM_TEMPLATES_DIR]
 
-        templates = [f for f in os.listdir(tmpl_dir) if f.endswith('.png')]
+        templates = []
+        for d in search_dirs:
+            if os.path.exists(d):
+                for f in os.listdir(d):
+                    if f.endswith('.png'):
+                        templates.append((os.path.join(d, f), os.path.splitext(f)[0]))
+                if templates:
+                    break  # 서브폴더에 있으면 루트 탐색 안 함
+
         if not templates:
-            return None, 0.0, "저장된 템플릿 없음 (calibrate.py [t] 사용)"
+            return None, 0.0, "저장된 템플릿 없음 (T키로 캡처)"
 
         best_score = -1.0
         best_team  = None
 
-        for fname in templates:
-            team = os.path.splitext(fname)[0]
+        for fpath, team in templates:
             try:
                 from PIL import Image as _PilImg
-                pil_tmpl = _PilImg.open(os.path.join(tmpl_dir, fname)).convert('RGB')
+                pil_tmpl = _PilImg.open(fpath).convert('RGB')
                 tmpl = cv2.cvtColor(np.array(pil_tmpl), cv2.COLOR_RGB2BGR)
             except Exception:
                 continue
@@ -613,7 +625,6 @@ class CalibrationGUI:
             th, tw = tmpl.shape[:2]
             ch, cw = crop.shape[:2]
 
-            # 템플릿이 크롭보다 크면 크롭 크기에 맞춰 축소
             if tw > cw or th > ch:
                 scale = min(cw / max(tw,1), ch / max(th,1))
                 tmpl  = cv2.resize(tmpl, (max(1,int(tw*scale)), max(1,int(th*scale))))
@@ -631,7 +642,7 @@ class CalibrationGUI:
         if best_team and best_score >= 0.5:
             return best_team, best_score, None
         elif best_team:
-            return best_team, best_score, f"(저신도 낙음: {best_score:.0%})"
+            return best_team, best_score, f"(저신도: {best_score:.0%})"
         return None, 0.0, "(인식 실패)"
 
     def _count_potential_bar(self, crop):
@@ -659,12 +670,19 @@ class CalibrationGUI:
         return (count, ratios)
 
     def _save_team_logo(self, team_name):
-        """team_logo 영역 크롭을 team_templates/팀이름.png로 저장"""
-        # batter_p1 의 team_logo 우선, 없으면 다른 모드에서 탐색
-        region = self.regions.get('batter_p1', {}).get('team_logo')
+        """team_logo 영역 크롭을 team_templates/{batter|pitcher}/팀이름.png로 저장"""
+        # 현재 모드에 따라 서브폴더 결정
+        if self.mode.startswith('pitcher'):
+            save_dir = TEAM_TEMPLATES_PITCHER
+        else:
+            save_dir = TEAM_TEMPLATES_BATTER
+
+        region = self.regions.get(self.mode, {}).get('team_logo')
         if region is None:
+            # 현재 모드에 없으면 같은 타입(batter/pitcher)에서 탐색
+            prefix = 'pitcher' if self.mode.startswith('pitcher') else 'batter'
             for mode_key, regs in self.regions.items():
-                if 'team_logo' in regs:
+                if mode_key.startswith(prefix) and 'team_logo' in regs:
                     region = regs['team_logo']
                     break
         if region is None:
@@ -680,14 +698,14 @@ class CalibrationGUI:
             print("[!] 영역 범위 오류"); return
 
         crop = self.frame[y1c:y2c, x1c:x2c]
-        os.makedirs(TEAM_TEMPLATES_DIR, exist_ok=True)
-        path = os.path.join(TEAM_TEMPLATES_DIR, f"{team_name}.png")
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, f"{team_name}.png")
         try:
-            # cv2.imwrite 는 Windows 한글 경로 실패 → PIL 사용
             from PIL import Image as _Img
             rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
             _Img.fromarray(rgb).save(path)
-            print(f"[+] 팀 로고 저장: {path}  ({crop.shape[1]}×{crop.shape[0]}px)")
+            sub = 'pitcher' if self.mode.startswith('pitcher') else 'batter'
+            print(f"[+] 팀 로고 저장: team_templates/{sub}/{team_name}.png  ({crop.shape[1]}×{crop.shape[0]}px)")
         except Exception as e:
             print(f"[!] 로고 저장 실패: {e}")
 
@@ -815,7 +833,7 @@ class CalibrationGUI:
 
                     # 팀 로고
                     if key == 'team_logo':
-                        team, score, warn = self._match_team_logo(crop)
+                        team, score, warn = self._match_team_logo(crop, mode=self.mode)
                         if team and score >= 0.5:
                             display = f"{team}  ({score:.0%})"
                             self.extract_results[key] = team
