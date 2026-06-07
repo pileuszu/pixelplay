@@ -476,9 +476,14 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             time.sleep(0.3)
             continue
 
-        # ── P1 추출 ──────────────────────────────────────
+        # ── P1 추출 (이름 비면 최대 3회 재시도) ────────────────────────
         print(f"\n[{idx+1}] ── P1 추출 중...")
-        p1 = extract_pitcher_p1(frame)
+        for attempt in range(3):
+            p1 = extract_pitcher_p1(stream.get_latest())
+            if p1['name']:
+                break
+            print(f"    [!] P1 이름 비어있음, 재시도 ({attempt+1}/3)...")
+            time.sleep(page_wait)
         print(f"    이름={p1['name']}  전체={p1['overall']}  포지션={p1['position']}  팀={p1['team']}")
         print(f"    능력치={p1['stats']}")
 
@@ -502,9 +507,15 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             mouse.click_ui('next_page')
             time.sleep(page_wait)
 
-        frame = stream.get_latest()
         print(f"[{idx+1}] ── P3 추출 중...")
-        p3 = extract_pitcher_p3(frame)
+        for attempt in range(3):
+            frame = stream.get_latest()
+            p3 = extract_pitcher_p3(frame)
+            total_px = sum(p3['stamina']['px_widths']) if p3['stamina'] else 0
+            if total_px > 20:
+                break
+            print(f"    [!] P3 체력바 이상(px_total={total_px}), 재시도 ({attempt+1}/3)...")
+            time.sleep(page_wait)
 
         if p3['stamina']:
             st = p3['stamina']
