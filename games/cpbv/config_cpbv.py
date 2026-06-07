@@ -76,17 +76,13 @@ BATTER_P3 = {
 }
 
 # 타자 Page 2 - 잠재력 (5개 항목, 2열 배치)
-# 바만 추출: 채워진 칸 수 = 잠재력 레벨 (0~4)
+# 슬롯 총 개수는 pt_pts 픽셀 포인트로 감지 (F키 픽커)
+# 항목 순서: 풀스윙, 번트, 클러치, 송구, 도루
 POTENTIAL_BAR_TOTAL = 4
+POTENTIAL_NAMES_BATTER  = ["fullswing", "bunt", "clutch", "throw", "steal"]
+POTENTIAL_NAMES_PITCHER = ["suppress_hr", "fastball", "composure", "breaking", "pickoff"]
 
-BATTER_P2 = {
-    # 레벨 바 (파란 칸 수 카운트 → 0~4)
-    "fullswing_bar":  (0.14, 0.497, 0.26, 0.038),  # 풀스윙 (1행 좌)
-    "bunt_bar":       (0.60, 0.497, 0.26, 0.038),  # 번트   (1행 우)
-    "clutch_bar":     (0.14, 0.555, 0.26, 0.038),  # 클러치 (2행 좌)
-    "throw_bar":      (0.60, 0.555, 0.26, 0.038),  # 송구   (2행 우)
-    "steal_bar":      (0.14, 0.613, 0.26, 0.038),  # 도루   (3행 좌)
-}
+BATTER_P2 = {}  # 영역 없음 - pt_pts 기반 감지
 
 # 투수 Page 1
 PITCHER_P1 = {
@@ -111,13 +107,8 @@ PITCHER_P3 = {
 }
 
 # 투수 Page 2 - 잠재력 (5개 항목, 2열 배치)
-PITCHER_P2 = {
-    "suppress_hr_bar":  (0.14, 0.497, 0.26, 0.038),  # 장타억제력 (1행 좌)
-    "fastball_bar":     (0.60, 0.497, 0.26, 0.038),  # 속구구종   (1행 우)
-    "composure_bar":    (0.14, 0.555, 0.26, 0.038),  # 침착성     (2행 좌)
-    "breaking_bar":     (0.60, 0.555, 0.26, 0.038),  # 변화구구종 (2행 우)
-    "pickoff_bar":      (0.14, 0.613, 0.26, 0.038),  # 견제       (3행 좌)
-}
+# 항목 순서: 장타억제력, 속구구종, 침착성, 변화구구종, 견제
+PITCHER_P2 = {}  # 영역 없음 - pt_pts 기반 감지
 
 # ─── 팀 로고 템플릿 경로 ─────────────────────────────────────────────
 import os

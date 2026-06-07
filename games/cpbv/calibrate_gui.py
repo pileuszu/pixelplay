@@ -59,7 +59,7 @@ from games.cpbv.config_cpbv import (
     WINDOW_LEFT, WINDOW_TOP, WINDOW_WIDTH, WINDOW_HEIGHT,
     BATTER_P1, BATTER_P2, BATTER_P3,
     PITCHER_P1, PITCHER_P2, PITCHER_P3, UI,
-    POTENTIAL_BAR_TOTAL,
+    POTENTIAL_BAR_TOTAL, POTENTIAL_NAMES_BATTER, POTENTIAL_NAMES_PITCHER,
 )
 
 OVERRIDE_PATH = os.path.join(os.path.dirname(__file__), 'config_override.json')
@@ -660,9 +660,40 @@ class CalibrationGUI:
                 reader = easyocr.Reader(['ko', 'en'], verbose=False)
                 regions = self.regions[self.mode]
 
+                # ─── P2 모드: pt_pts 픽셀 포인트 기반 감지 ──────────────────
+                if self.mode in ('batter_p2', 'pitcher_p2'):
+                    names = (POTENTIAL_NAMES_BATTER if self.mode == 'batter_p2'
+                             else POTENTIAL_NAMES_PITCHER)
+                    bar_keys = [n + '_bar' for n in names]
+                    pts_map = self.pt_pts.get(self.mode, {})
+                    fh, fw = self.frame.shape[:2]
+                    for bar_key in bar_keys:
+                        pts = pts_map.get(bar_key, [])
+                        count = 1  # 슬롯 1은 항상 존재
+                        for pt in pts:
+                            if pt is None:
+                                break
+                            px = int(STREAM_GAME_X1 + pt[0] * GAME_W)
+                            py = int(STREAM_GAME_Y1 + pt[1] * GAME_H)
+                            px = max(0, min(fw-1, px))
+                            py = max(0, min(fh-1, py))
+                            pixel = self.frame[py, px]   # BGR
+                            gray_val = int(pixel[0]) * 0.114 + int(pixel[1]) * 0.587 + int(pixel[2]) * 0.299
+                            # 흰 배경(230+)이 아니면 슬롯 있음
+                            if gray_val < 220:
+                                count += 1
+                            else:
+                                break   # 슬롯은 연속적이므로 흰색 나오면 중단
+                        self.extract_results[bar_key] = str(count)
+                        dbg = f"pts={len(pts)}" if pts else "포인트 미설정"
+                        print(f"  {bar_key:<22} : {count}  [{dbg}]")
+                    self.extract_status = f"완료 ({len(bar_keys)}개 잠재력)"
+                    print(f"{'─'*52}\n")
+                    return
+
+                # ─── 일반 모드: 영역 OCR ─────────────────────────────────────
                 for key, region in regions.items():
                     x1, y1, x2, y2 = rect_px(*region)
-                    # 프레임 범위 클램프
                     fh, fw = self.frame.shape[:2]
                     x1c, y1c = max(0,x1), max(0,y1)
                     x2c, y2c = min(fw,x2), min(fh,y2)
@@ -673,11 +704,11 @@ class CalibrationGUI:
 
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
-                    # ─── 스킵 항목 (추출 불필요) ──────────────────────────────
+                    # 스킵
                     if key in ('overall_area', 'stamina_bar'):
                         continue
 
-                    # ─── 팀 로고: 템플릿 매칭 ──────────────────────────────────
+                    # 팀 로고
                     if key == 'team_logo':
                         team, score, warn = self._match_team_logo(crop)
                         if team and score >= 0.5:
@@ -692,21 +723,12 @@ class CalibrationGUI:
                         print(f"  {key:<22} : {display}")
                         continue
 
-                    # ─── *_bar: 잠재력 총 칸 수 (P2 모드만) ──────────────────────
-                    if key.endswith('_bar') and self.mode in ('batter_p2', 'pitcher_p2'):
-                        count, dbg = self._count_potential_bar(crop)
-                        self.extract_results[key] = str(count)
-                        print(f"  {key:<22} : {count}  [비율: {dbg}]")
-                        continue
-
-                    # ─── 일반 텍스트 영역: OCR ──────────────────────────
-                    # 작은 크롭은 확대 (OCR 정확도 향상)
+                    # 일반 OCR
                     ch, cw = crop.shape[:2]
                     if cw < 60 or ch < 20:
                         scale = max(3, 60 // max(cw,1))
                         crop = cv2.resize(crop, (cw*scale, ch*scale),
                                           interpolation=cv2.INTER_CUBIC)
-
                     results = reader.readtext(crop, detail=1)
                     texts = [(t, c) for _, t, c in results if c > 0.25]
                     if texts:
@@ -716,10 +738,8 @@ class CalibrationGUI:
                     else:
                         val = ''
                         display = '(인식 안 됨)'
-
                     self.extract_results[key] = val if texts else ''
                     print(f"  {key:<22} : {display}")
-
 
                 self.extract_status = f"완료 ({len(regions)}개 영역)"
                 print(f"{'─'*52}\n")
