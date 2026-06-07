@@ -14,8 +14,8 @@ WINDOW_HEIGHT = WINDOW_BOTTOM - WINDOW_TOP    # 1319
 
 # ─── 스트림 설정 ─────────────────────────────────────────────────────
 # OBS 출력 해상도 (ffmpeg 스트림 해상도)
-STREAM_WIDTH  = 1280
-STREAM_HEIGHT = 720
+STREAM_WIDTH  = 1920
+STREAM_HEIGHT = 1080
 
 # 스트림 내 게임창 위치 (OBS 중앙 맞춤 기준, 자동 계산)
 # 게임창 비율: 736/1319 = 0.558
