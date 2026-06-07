@@ -697,11 +697,16 @@ class CalibrationGUI:
                     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
                     pil_img = _PilImg.fromarray(rgb)
                     w, h = pil_img.size
-                    # 전체 크롭을 단일 bbox로 전달 → detection 건너뜀
-                    results = rec_predictor([pil_img], bboxes=[[[0, 0, w, h]]])
+                    # 전체 크롭을 단일 bbox로 전달, math_mode=False (LaTeX 출력 방지)
+                    results = rec_predictor([pil_img], bboxes=[[[0, 0, w, h]]], math_mode=False)
                     if not results or not results[0].text_lines:
                         return []
-                    return [(_re.sub(r'<[^>]+>', '', line.text).strip(), line.confidence)
+                    def _clean(t):
+                        t = _re.sub(r'<[^>]+>', '', t)   # HTML 태그
+                        t = _re.sub(r'\\[a-zA-Z,;!]+', '', t)  # LaTeX 커맨드
+                        t = _re.sub(r'[{}^_]', '', t)    # LaTeX 괄호
+                        return t.strip()
+                    return [(_clean(line.text), line.confidence)
                             for line in results[0].text_lines
                             if line.confidence > 0.25]
 
@@ -823,8 +828,10 @@ class CalibrationGUI:
                     vals = []
                     for sk in stat_keys:
                         v = self.extract_results.get(sk, '')
-                        try: vals.append(int(v))
-                        except: pass
+                        import re as _re
+                        m = _re.search(r'\d+', v)  # 숫자만 추출 (LaTeX 잔재 무시)
+                        if m:
+                            vals.append(int(m.group()))
                     if vals:
                         overall = round(sum(vals) / len(vals))
                         self.extract_results['overall_area'] = str(overall)
