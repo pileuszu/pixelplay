@@ -70,6 +70,12 @@ TEAMS = [
     ('9', 'NC'),     ('0', 'KT'),
 ]
 
+# overall 계산 대상 스탯 (평균으로 산출)
+OVERALL_STAT_KEYS = {
+    'batter_p1':  ['stat_power', 'stat_endure', 'stat_contact', 'stat_run', 'stat_eye', 'stat_defense'],
+    'pitcher_p1': ['stat_speed', 'stat_control', 'stat_break', 'stat_stamina', 'stat_stuff', 'stat_defense'],
+}
+
 GAME_W = STREAM_GAME_X2 - STREAM_GAME_X1
 GAME_H = STREAM_GAME_Y2 - STREAM_GAME_Y1
 
@@ -608,6 +614,11 @@ class CalibrationGUI:
                         print(f"  {key:<22} : {display}")
                         continue
 
+                    # ─── overall_area: 팔 끏 계산 (루프 종료 후 처리) ─────────────
+                    if key == 'overall_area':
+                        self.extract_results[key] = '__compute__'
+                        continue
+
                     # ─── 일반 텍스트 영역: OCR ──────────────────────────
                     # 작은 크롭은 확대 (OCR 정확도 향상)
                     ch, cw = crop.shape[:2]
@@ -623,10 +634,30 @@ class CalibrationGUI:
                         conf_avg = sum(c for _, c in texts) / len(texts)
                         display  = f"{val}  ({conf_avg:.0%})"
                     else:
+                        val = ''
                         display = '(인식 안 됨)'
 
                     self.extract_results[key] = val if texts else ''
                     print(f"  {key:<22} : {display}")
+
+                # ─── overall 계산 (스탯 평균) ─────────────────────────────────
+                import re
+                stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
+                if stat_keys and 'overall_area' in self.extract_results:
+                    nums = []
+                    for sk in stat_keys:
+                        raw = self.extract_results.get(sk, '')
+                        m   = re.search(r'\d+', str(raw))
+                        if m: nums.append(int(m.group()))
+                    if nums:
+                        computed = round(sum(nums) / len(nums), 1)
+                        display  = (f"{computed}  "
+                                    f"({len(nums)}/{len(stat_keys)}스탯 평균)")
+                        self.extract_results['overall_area'] = str(computed)
+                    else:
+                        display = '(스탯 미인식)'
+                        self.extract_results['overall_area'] = ''
+                    print(f"  {'overall_area':<22} : {display}")
 
                 self.extract_status = f"완료 ({len(regions)}개 영역)"
                 print(f"{'─'*52}\n")
