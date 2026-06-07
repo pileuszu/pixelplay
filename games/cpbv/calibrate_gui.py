@@ -540,6 +540,37 @@ class CalibrationGUI:
             return best_team, best_score, f"(저신도 낙음: {best_score:.0%})"
         return None, 0.0, "(인식 실패)"
 
+    def _count_potential_bar(self, crop):
+        """잠재력 레벨 바에서 채워진 칸 수 반환 (색상 감지).
+        청록/파랑 계열 픽셀이 일정 비율 이상이면 '채워짐'으로 판단.
+        바를 POTENTIAL_BAR_TOTAL 구간으로 나눠 각 구간 독립 판단.
+        """
+        import config_cpbv as cfg
+        n = cfg.POTENTIAL_BAR_TOTAL   # 4
+        if crop is None or crop.size == 0:
+            return 0
+        h, w = crop.shape[:2]
+        if w == 0 or h == 0:
+            return 0
+
+        # HSV 변환 후 청록/파랑 마스크
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        # 청록색: H 80~110 (OpenCV H 범위 0~179)
+        mask = cv2.inRange(hsv,
+                           np.array([75, 80, 80]),
+                           np.array([115, 255, 255]))
+
+        count = 0
+        seg_w = max(1, w // n)
+        for i in range(n):
+            x_start = i * seg_w
+            x_end   = x_start + seg_w if i < n - 1 else w
+            seg = mask[:, x_start:x_end]
+            ratio = np.count_nonzero(seg) / (seg.size or 1)
+            if ratio > 0.05:   # 5% 이상 채색 = 채워진 칸
+                count += 1
+        return count
+
     def _save_team_logo(self, team_name):
         """team_logo 영역 크롭을 team_templates/팀이름.png로 저장"""
         region = self.regions.get(self.mode, {}).get('team_logo')
@@ -617,6 +648,14 @@ class CalibrationGUI:
                     # ─── overall_area: 팔 끏 계산 (루프 종료 후 처리) ─────────────
                     if key == 'overall_area':
                         self.extract_results[key] = '__compute__'
+                        continue
+
+                    # ─── *_bar: 잠재력 색상 감지 (OCR 아님) ──────────────────────
+                    if key.endswith('_bar'):
+                        count = self._count_potential_bar(crop)
+                        display = f"{count} / {cfg.POTENTIAL_BAR_TOTAL}"
+                        self.extract_results[key] = str(count)
+                        print(f"  {key:<22} : {display}")
                         continue
 
                     # ─── 일반 텍스트 영역: OCR ──────────────────────────
