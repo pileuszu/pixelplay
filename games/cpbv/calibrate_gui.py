@@ -813,8 +813,8 @@ class CalibrationGUI:
                     print(f"  {key:<22} : {display}")
 
                 # ─── overall: 스탯 평균으로 사후 계산 ────────────────────────
-                if 'overall_area' in regions:
-                    stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
+                stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
+                if stat_keys:
                     vals = []
                     for sk in stat_keys:
                         v = self.extract_results.get(sk, '')
