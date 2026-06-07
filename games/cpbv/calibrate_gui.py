@@ -22,6 +22,33 @@ import threading
 import socket
 import numpy as np
 import argparse
+import re as _re_pitch
+from difflib import SequenceMatcher as _SM
+
+# ─── 알려진 구종명 분류기 ─────────────────────────────────────────────────────
+KNOWN_PITCH_NAMES = [
+    '포심', '투심', '커터', '싱커',
+    '체인지업', '서클체인지업', '슬라이더', '커브', '포크', '스플리터',
+]
+
+def _classify_pitch_name(ocr_text):
+    """OCR 결과 → 알려진 구종명으로 분류"""
+    if not ocr_text:
+        return ''
+    for pitch in KNOWN_PITCH_NAMES:
+        if pitch in ocr_text:
+            return pitch
+    best_name, best_score = '', 0.0
+    for pitch in KNOWN_PITCH_NAMES:
+        if ocr_text in pitch and len(ocr_text) >= 2:
+            s = len(ocr_text) / len(pitch)
+            if s > best_score:
+                best_score = s; best_name = pitch
+        s = _SM(None, ocr_text, pitch).ratio()
+        if s > best_score:
+            best_score = s; best_name = pitch
+    return best_name if best_score >= 0.4 else ocr_text
+
 
 # PIL for Korean text rendering
 try:
@@ -876,10 +903,12 @@ class CalibrationGUI:
                             nup = cv2.resize(ncrop, (nw2*nscale, nh*nscale),
                                              interpolation=cv2.INTER_CUBIC)
                             ntexts = _ocr_crop(nup)
-                            nraw = ' '.join(t for t, _ in ntexts) if ntexts else ''
-                            nm = _re2.search(r'[\uAC00-\uD7A3]{2,}', nraw)
-                            if nm:
-                                name = nm.group()
+                            ntexts_sorted = sorted(ntexts, key=lambda x: -x[1])
+                            for _nt, _ in ntexts_sorted:
+                                _nm = _re_pitch.search(r'[\uAC00-\uD7A3]{2,}', _nt)
+                                if _nm:
+                                    name = _classify_pitch_name(_nm.group())
+                                    break
 
                         # 등급 OCR
                         gx1, gy1, gx2, gy2 = rect_px(*greg)
