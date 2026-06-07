@@ -366,10 +366,22 @@ def extract_pitches(frame, regions=None):
         if not nreg or not greg:
             continue
 
-        # 이름
-        name_raw = ocr_text(frame, nreg, scale_target_h=60)
-        nm = re.search(r'[\uAC00-\uD7A3]{2,}', name_raw)
-        name = nm.group() if nm else ''
+        # 이름: confidence 가장 높은 한 줄만 사용 (여러 줄 합치면 이름 오염)
+        ncrop = crop_region(frame, nreg)
+        name = ''
+        if ncrop is not None:
+            nh, nw = ncrop.shape[:2]
+            if nw > 0 and nh > 0:
+                nscale = max(2, 60 // max(nh, 1))
+                nup = cv2.resize(ncrop, (nw*nscale, nh*nscale), interpolation=cv2.INTER_CUBIC)
+                ntexts = _ocr_crop(nup)
+                # confidence 순 정렬 → 가장 높은 라인에서 한글 추출
+                ntexts_sorted = sorted(ntexts, key=lambda x: -x[1])
+                for ntext, _ in ntexts_sorted:
+                    nm = re.search(r'[\uAC00-\uD7A3]{2,}', ntext)
+                    if nm:
+                        name = nm.group()
+                        break
 
         # 등급 OCR (배지 영역 고배율)
         gcrop = crop_region(frame, greg)
