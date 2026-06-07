@@ -20,7 +20,8 @@ import socket
 # 프로젝트 루트를 path에 추가
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from games.cpbv.config_cpbv import (
-    WINDOW_LEFT, WINDOW_TOP, WINDOW_WIDTH, WINDOW_HEIGHT,
+    WINDOW_LEFT, WINDOW_TOP, WINDOW_RIGHT, WINDOW_BOTTOM,
+    WINDOW_WIDTH, WINDOW_HEIGHT,
     STREAM_URL, MOUSE_HOST, MOUSE_PORT, UI,
     BATTER_P1, PITCHER_P1, BATTER_P3, PITCHER_P3,
     TEAM_TEMPLATES_DIR, TEAMS
