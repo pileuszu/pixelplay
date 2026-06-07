@@ -902,12 +902,20 @@ class CalibrationGUI:
                 if pos_raw:
                     self.extract_results['position_area'] = _classify_position(pos_raw, self.mode)
 
-                # 이름 특수문자 정제 (앞뒤 |/- 등 제거, '연도는 유지)
+                # 이름 정제: 앞뒤 특수문자 + 그림자 중복 텍스트 제거
                 name_raw = self.extract_results.get('name_area', '')
                 if name_raw:
-                    name_clean = _re.sub(r"^[^\w']+", '', name_raw)   # 앞쪽 특수문자 제거
-                    name_clean = _re.sub(r"[^\w']+$", '', name_clean)  # 뒤쪽 특수문자 제거
-                    self.extract_results['name_area'] = name_clean.strip()
+                    nc = _re.sub(r"^[^\w\uAC00-\uD7A3']+", '', name_raw)  # 앞쪽 쓰레기 제거
+                    # 연도 마커('YY)가 있으면 첫 번째 것까지만 사용 (그림자 이중 텍스트 차단)
+                    m_year = _re.search(r"'\d{2}", nc)
+                    if m_year:
+                        nc = nc[:m_year.end()]
+                    else:
+                        # 연도 없으면 한글+영문 구간만 추출
+                        m_name = _re.search(r"[\uAC00-\uD7A3A-Za-z][\uAC00-\uD7A3A-Za-z\s]{1,15}", nc)
+                        if m_name:
+                            nc = m_name.group()
+                    self.extract_results['name_area'] = nc.strip()
 
                 # 종합 요약 출력
                 print(f"\n{'─'*52}")
