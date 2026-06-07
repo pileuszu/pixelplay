@@ -629,31 +629,15 @@ class CalibrationGUI:
 
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
-                    # ─── 팀 로고: 템플릿 매칭 ───────────────────────────
-                    if key == 'team_logo':
-                        team, score, warn = self._match_team_logo(crop)
-                        if team and score >= 0.5:
-                            display = f"{team}  ({score:.0%})"
-                            self.extract_results[key] = team
-                        elif team:
-                            display = f"{team}?  ({score:.0%}) ← 저신도 낙음"
-                            self.extract_results[key] = team
-                        else:
-                            display = warn or '(인식 실패)'
-                            self.extract_results[key] = ''
-                        print(f"  {key:<22} : {display}")
+                    # ─── 스킵 항목 (추출 불필요) ──────────────────────────────
+                    if key in ('team_logo', 'overall_area', 'stamina_bar'):
                         continue
 
-                    # ─── overall_area: 팔 끏 계산 (루프 종료 후 처리) ─────────────
-                    if key == 'overall_area':
-                        self.extract_results[key] = '__compute__'
-                        continue
-
-                    # ─── *_bar: 잠재력 총 칸 수 (밝기 감지) ──────────────────────
-                    if key.endswith('_bar'):
-                        count = self._count_potential_bar(crop)
+                    # ─── *_bar: 잠재력 총 칸 수 (P2 모드만) ──────────────────────
+                    if key.endswith('_bar') and self.mode in ('batter_p2', 'pitcher_p2'):
+                        count, dbg = self._count_potential_bar(crop)
                         self.extract_results[key] = str(count)
-                        print(f"  {key:<22} : {count}")
+                        print(f"  {key:<22} : {count}  [비율: {dbg}]")
                         continue
 
                     # ─── 일반 텍스트 영역: OCR ──────────────────────────
@@ -677,24 +661,6 @@ class CalibrationGUI:
                     self.extract_results[key] = val if texts else ''
                     print(f"  {key:<22} : {display}")
 
-                # ─── overall 계산 (스탯 평균) ─────────────────────────────────
-                import re
-                stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
-                if stat_keys and 'overall_area' in self.extract_results:
-                    nums = []
-                    for sk in stat_keys:
-                        raw = self.extract_results.get(sk, '')
-                        m   = re.search(r'\d+', str(raw))
-                        if m: nums.append(int(m.group()))
-                    if nums:
-                        computed = int(round(sum(nums) / len(nums)))
-                        display  = (f"{computed}  "
-                                    f"({len(nums)}/{len(stat_keys)}스탯 평균)")
-                        self.extract_results['overall_area'] = str(computed)
-                    else:
-                        display = '(스탯 미인식)'
-                        self.extract_results['overall_area'] = ''
-                    print(f"  {'overall_area':<22} : {display}")
 
                 self.extract_status = f"완료 ({len(regions)}개 영역)"
                 print(f"{'─'*52}\n")
