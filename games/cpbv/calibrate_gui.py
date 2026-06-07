@@ -58,7 +58,8 @@ from games.cpbv.config_cpbv import (
     STREAM_GAME_X1, STREAM_GAME_Y1, STREAM_GAME_X2, STREAM_GAME_Y2,
     WINDOW_LEFT, WINDOW_TOP, WINDOW_WIDTH, WINDOW_HEIGHT,
     BATTER_P1, BATTER_P2, BATTER_P3,
-    PITCHER_P1, PITCHER_P2, PITCHER_P3, UI
+    PITCHER_P1, PITCHER_P2, PITCHER_P3, UI,
+    POTENTIAL_BAR_TOTAL,
 )
 
 OVERRIDE_PATH = os.path.join(os.path.dirname(__file__), 'config_override.json')
@@ -545,8 +546,7 @@ class CalibrationGUI:
         청록/파랑 계열 픽셀이 일정 비율 이상이면 '채워짐'으로 판단.
         바를 POTENTIAL_BAR_TOTAL 구간으로 나눠 각 구간 독립 판단.
         """
-        import config_cpbv as cfg
-        n = cfg.POTENTIAL_BAR_TOTAL   # 4
+        n = POTENTIAL_BAR_TOTAL   # 4
         if crop is None or crop.size == 0:
             return 0
         h, w = crop.shape[:2]
@@ -653,7 +653,7 @@ class CalibrationGUI:
                     # ─── *_bar: 잠재력 색상 감지 (OCR 아님) ──────────────────────
                     if key.endswith('_bar'):
                         count = self._count_potential_bar(crop)
-                        display = f"{count} / {cfg.POTENTIAL_BAR_TOTAL}"
+                        display = f"{count} / {POTENTIAL_BAR_TOTAL}"
                         self.extract_results[key] = str(count)
                         print(f"  {key:<22} : {display}")
                         continue
