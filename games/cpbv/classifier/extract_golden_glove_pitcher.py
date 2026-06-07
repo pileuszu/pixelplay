@@ -3,6 +3,7 @@ CPBV 골든 글러브 투수 정보 자동 추출기
 --------------------------------------
 게임에서 투수 카드 화면을 열어두면 자동으로:
   - P1: 이름, 오버롤, 포지션, 팀, 능력치 6종 추출
+  - P2: 잠재력 5종 (장타억제, 속구구종, 침착성, 변화구구종, 견제) 1~4 값
   - P3: 체력바 구간(픽셀), 구종 + 등급(S/A/B/C/D/E) 추출
 
 사용법:
@@ -11,7 +12,7 @@ CPBV 골든 글러브 투수 정보 자동 추출기
   python -m games.cpbv.classifier.extract_golden_glove_pitcher --out D:/data/pitchers.json
 
 흐름:
-  P1 추출 → next_page×2 → P3 추출 → 저장
+  P1 추출 → next_page → P2 추출 → next_page → P3 추출 → 저장
   → next_player → prev_page×2 → P1 추출 → ...
 """
 
@@ -36,8 +37,16 @@ from games.cpbv.config_cpbv import (
     STREAM_URL, MOUSE_HOST, MOUSE_PORT,
     STREAM_GAME_X1, STREAM_GAME_Y1, STREAM_GAME_X2, STREAM_GAME_Y2,
     PITCHER_P1, PITCHER_P3, UI,
-    TEAM_TEMPLATES_DIR,
+    TEAM_TEMPLATES_DIR, POTENTIAL_NAMES_PITCHER,
 )
+
+# config_override.json에서 pt_pts 로드 (P2 잠재력 포인트)
+_OVERRIDE_PATH = os.path.join(_HERE, '..', 'config_override.json')
+_PT_PTS: dict = {}
+if os.path.exists(_OVERRIDE_PATH):
+    with open(_OVERRIDE_PATH, encoding='utf-8') as _f:
+        _ovr = json.load(_f)
+    _PT_PTS = _ovr.get('pt_pts', {})
 
 GAME_W = STREAM_GAME_X2 - STREAM_GAME_X1
 GAME_H = STREAM_GAME_Y2 - STREAM_GAME_Y1
@@ -367,6 +376,43 @@ def extract_pitcher_p3(frame, regions=None):
     }
 
 
+# ─── P2 추출 ────────────────────────────────────────────────────────────────
+def extract_pitcher_p2(frame, pt_pts: dict = None):
+    """
+    투수 Page 2: 잠재력 5종 (pt_pts 픽셀 샘플링)
+    pt_pts[bar_key] = [(rx,ry), (rx,ry), (rx,ry)]  # 슬롯 2, 3, 4
+    슬롯 1은 항상 있음 → count 시작 = 1
+    gray < 220 이면 해당 슬롯 활성
+    """
+    if pt_pts is None:
+        pt_pts = _PT_PTS.get('pitcher_p2', {})
+
+    fh, fw = frame.shape[:2]
+    bar_names = POTENTIAL_NAMES_PITCHER  # [suppress_hr, fastball, composure, breaking, pickoff]
+    result = {}
+
+    for name in bar_names:
+        bar_key = f'{name}_bar'
+        pts = pt_pts.get(bar_key, [])
+        count = 1  # 슬롯 1은 항상 존재
+        for pt in pts:
+            if pt is None:
+                break
+            px = int(STREAM_GAME_X1 + pt[0] * GAME_W)
+            py = int(STREAM_GAME_Y1 + pt[1] * GAME_H)
+            px = max(0, min(fw - 1, px))
+            py = max(0, min(fh - 1, py))
+            b, g, r = frame[py, px]
+            gray_val = int(b) * 0.114 + int(g) * 0.587 + int(r) * 0.299
+            if gray_val < 220:   # 슬롯 채워져 있음
+                count += 1
+            else:
+                break            # 슬롯은 연속적 → 빈 슬롯 나오면 중단
+        result[name] = count
+
+    return result
+
+
 # ─── 메인 추출 루프 ──────────────────────────────────────────────────────────
 def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
         page_wait: float = 1.5, player_wait: float = 1.0):
@@ -403,6 +449,7 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             time.sleep(0.3)
             continue
 
+        # ── P1 추출 ──────────────────────────────────────
         print(f"\n[{idx+1}] ── P1 추출 중...")
         p1 = extract_pitcher_p1(frame)
         print(f"    이름={p1['name']}  전체={p1['overall']}  포지션={p1['position']}  팀={p1['team']}")
@@ -413,10 +460,18 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
             print(f"\n[*] 중복 감지: '{p1['name']}' → 전체 순환 완료, 종료")
             break
 
-        # P3으로 이동 (next_page × 2)
+        # ── P1 → P2 ──────────────────────────────────────
         if mouse.connected:
             mouse.click_ui('next_page')
             time.sleep(page_wait)
+
+        frame = stream.get_latest()
+        print(f"[{idx+1}] ── P2 추출 중...")
+        p2 = extract_pitcher_p2(frame)
+        print(f"    잠재력={p2}")
+
+        # ── P2 → P3 ──────────────────────────────────────
+        if mouse.connected:
             mouse.click_ui('next_page')
             time.sleep(page_wait)
 
@@ -430,9 +485,10 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
         pitches_str = '  '.join(f"{p['name']}:{p['grade']}" for p in p3['pitches'])
         print(f"    구종: {pitches_str}")
 
-        # 통합 레코드
+        # ── 통합 레코드 ───────────────────────────────────
         record = {
             **p1,
+            'potential': p2,
             'stamina_detail': p3['stamina'],
             'pitches': p3['pitches'],
             'page_idx': idx + 1,
@@ -451,7 +507,7 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
         if count and idx >= count:
             break
 
-        # 다음 선수로 (P3에서 next_player → prev_page×2 → P1)
+        # ── 다음 선수로 (P3 → next_player → prev_page×2 → P1) ──
         if mouse.connected:
             mouse.click_ui('next_player')
             time.sleep(player_wait)
@@ -466,21 +522,26 @@ def run(stream_url: str, mouse: MouseClient, count: int, out_path: str,
 
 
 # ─── 단일 프레임 테스트 ──────────────────────────────────────────────────────
-def test_frame(img_path: str):
-    """스크린샷으로 P1/P3 추출 테스트"""
+def test_frame(img_path: str, page: str = 'p1'):
+    """스크린샷으로 P1/P2/P3 추출 테스트"""
     _init_ocr()
     frame = cv2.imread(img_path)
     if frame is None:
         print(f"[!] 이미지 로드 실패: {img_path}")
         return
 
-    print("=== P1 추출 ===")
-    p1 = extract_pitcher_p1(frame)
-    print(json.dumps(p1, ensure_ascii=False, indent=2))
-
-    print("\n=== P3 추출 ===")
-    p3 = extract_pitcher_p3(frame)
-    print(json.dumps(p3, ensure_ascii=False, indent=2))
+    if page == 'p1':
+        print("=== P1 추출 ===")
+        p1 = extract_pitcher_p1(frame)
+        print(json.dumps(p1, ensure_ascii=False, indent=2))
+    elif page == 'p2':
+        print("=== P2 추출 (잠재력) ===")
+        p2 = extract_pitcher_p2(frame)
+        print(json.dumps(p2, ensure_ascii=False, indent=2))
+    elif page == 'p3':
+        print("=== P3 추출 ===")
+        p3 = extract_pitcher_p3(frame)
+        print(json.dumps(p3, ensure_ascii=False, indent=2))
 
 
 # ─── 진입점 ─────────────────────────────────────────────────────────────────
@@ -497,10 +558,12 @@ if __name__ == '__main__':
     parser.add_argument('--player-wait', default=1.0,         type=float,
                         help='선수 전환 대기(초)')
     parser.add_argument('--test-image',  default=None,        help='단일 이미지 테스트')
+    parser.add_argument('--test-page',   default='p1',        choices=['p1','p2','p3'],
+                        help='테스트 페이지 (p1/p2/p3)')
     args = parser.parse_args()
 
     if args.test_image:
-        test_frame(args.test_image)
+        test_frame(args.test_image, args.test_page)
     else:
         mouse = MouseClient(args.mouse_host, args.mouse_port)
         run(
