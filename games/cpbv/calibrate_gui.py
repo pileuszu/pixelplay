@@ -60,6 +60,7 @@ from games.cpbv.config_cpbv import (
     BATTER_P1, BATTER_P2, BATTER_P3,
     PITCHER_P1, PITCHER_P2, PITCHER_P3, UI,
     POTENTIAL_BAR_TOTAL, POTENTIAL_NAMES_BATTER, POTENTIAL_NAMES_PITCHER,
+    HOTZONE_ROWS, HOTZONE_COLS,
 )
 
 OVERRIDE_PATH = os.path.join(os.path.dirname(__file__), 'config_override.json')
@@ -414,23 +415,38 @@ class CalibrationGUI:
         if event == cv2.EVENT_LBUTTONDOWN:
             # ── 포인트 픽커 모드 우선 처리 ───────────────────────────────
             if self.pt_pick_idx >= 0 and self.pt_pick_idx < len(self.pt_pick_queue):
-                mode, bar_key, slot_idx = self.pt_pick_queue[self.pt_pick_idx]
+                mode, key_name, slot_idx = self.pt_pick_queue[self.pt_pick_idx]
                 rx = (x - STREAM_GAME_X1) / max(GAME_W, 1)
                 ry = (y - STREAM_GAME_Y1) / max(GAME_H, 1)
                 if mode not in self.pt_pts:
                     self.pt_pts[mode] = {}
-                if bar_key not in self.pt_pts[mode]:
-                    self.pt_pts[mode][bar_key] = [None, None, None]
-                self.pt_pts[mode][bar_key][slot_idx] = (round(rx,4), round(ry,4))
-                slot_num = slot_idx + 2
-                print(f"  [PT] {bar_key} 슬롯{slot_num} → ({rx:.4f}, {ry:.4f})")
+
+                if key_name == 'hotzone_pts':
+                    # 핫존: 단일 리스트에 순서대로 저장
+                    total = HOTZONE_ROWS * HOTZONE_COLS
+                    if key_name not in self.pt_pts[mode]:
+                        self.pt_pts[mode][key_name] = [None] * total
+                    self.pt_pts[mode][key_name][slot_idx] = (round(rx,4), round(ry,4))
+                    r, c = divmod(slot_idx, HOTZONE_COLS)
+                    print(f"  [PT] 핫존 {r+1}행{c+1}열 → ({rx:.4f}, {ry:.4f})")
+                else:
+                    # 잠재력 바: 슬롯 2,3,4
+                    if key_name not in self.pt_pts[mode]:
+                        self.pt_pts[mode][key_name] = [None, None, None]
+                    self.pt_pts[mode][key_name][slot_idx] = (round(rx,4), round(ry,4))
+                    print(f"  [PT] {key_name} 슬롯{slot_idx+2} → ({rx:.4f}, {ry:.4f})")
+
                 self.pt_pick_idx += 1
                 if self.pt_pick_idx >= len(self.pt_pick_queue):
                     self.pt_pick_idx = -1
                     print("  [PT] 완료! S키로 저장하세요.")
                 else:
                     nxt = self.pt_pick_queue[self.pt_pick_idx]
-                    print(f"  [PT] → {nxt[1]} 슬롯{nxt[2]+2} 클릭")
+                    if nxt[1] == 'hotzone_pts':
+                        nr, nc = divmod(nxt[2], HOTZONE_COLS)
+                        print(f"  [PT] → {nr+1}행 {nc+1}열 클릭")
+                    else:
+                        print(f"  [PT] → {nxt[1]} 슬롯{nxt[2]+2} 클릭")
                 return
 
             # ── 일반 드래그 시작 ──────────────────────────────────────────
@@ -687,6 +703,46 @@ class CalibrationGUI:
                         dbg = f"pts={len(pts)}" if pts else "포인트 미설정"
                         print(f"  {bar_key:<22} : {count}  [{dbg}]")
                     self.extract_status = f"완료 ({len(bar_keys)}개 잠재력)"
+                    print(f"{'─'*52}\n")
+                    return
+
+                # ─── batter_p3: 핫/콜드존 색상 분류 ──────────────────────────
+                if self.mode == 'batter_p3':
+                    pts_list = self.pt_pts.get('batter_p3', {}).get('hotzone_pts', [])
+                    fh, fw = self.frame.shape[:2]
+                    total = HOTZONE_ROWS * HOTZONE_COLS
+                    grid = []
+                    for idx in range(total):
+                        pt = pts_list[idx] if idx < len(pts_list) else None
+                        if pt is None:
+                            grid.append('?')
+                            continue
+                        px = int(STREAM_GAME_X1 + pt[0] * GAME_W)
+                        py = int(STREAM_GAME_Y1 + pt[1] * GAME_H)
+                        px = max(0, min(fw-1, px))
+                        py = max(0, min(fh-1, py))
+                        bgr = self.frame[py, px]
+                        hsv = cv2.cvtColor(
+                            np.array([[bgr]], dtype=np.uint8),
+                            cv2.COLOR_BGR2HSV)[0][0]
+                        h, s, v = int(hsv[0]), int(hsv[1]), int(hsv[2])
+                        # HSV 분류: 빨강계(H<10 or H>170) = 핫, 파랑계(H100~140) = 콜드
+                        if s < 50:
+                            level = 0   # 무채색 / 중립
+                        elif h <= 10 or h >= 170:
+                            level = 2 if s > 150 else 1   # 매우핫 / 핫
+                        elif 100 <= h <= 140:
+                            level = -2 if s > 150 else -1  # 매우콜드 / 콜드
+                        else:
+                            level = 0
+                        grid.append(str(level))
+                    # 3×3 출력
+                    self.extract_results['hotzone_pts'] = ','.join(grid)
+                    print(f"  {'hotzone_pts':<22} :")
+                    for row in range(HOTZONE_ROWS):
+                        row_vals = grid[row*HOTZONE_COLS:(row+1)*HOTZONE_COLS]
+                        print(f"    {' '.join(f'{v:>3}' for v in row_vals)}")
+                    self.extract_status = "완료 (핫존 9셀)"
                     print(f"{'─'*52}\n")
                     return
 
@@ -965,11 +1021,24 @@ class CalibrationGUI:
                     ]
                     self.pt_pick_idx = 0
                     total = len(self.pt_pick_queue)
-                    print(f"  [PT] 포인트 픽커 시작 ({total}개 포인트)")
+                    print(f"  [PT] 잠재력 픽커 시작 ({total}개 포인트)")
                     if total > 0:
                         print(f"  [PT] → {self.pt_pick_queue[0][1]} 슬롯{self.pt_pick_queue[0][2]+2} 클릭")
+
+                elif self.mode == 'batter_p3':
+                    # 핫/콜드존: 3×3 = 9 포인트
+                    total = HOTZONE_ROWS * HOTZONE_COLS
+                    self.pt_pick_queue = [
+                        ('batter_p3', 'hotzone_pts', idx)
+                        for idx in range(total)
+                    ]
+                    self.pt_pick_idx = 0
+                    print(f"  [PT] 핫/콜드존 픽커 시작 ({total}개 셀)")
+                    r, c = 0, 0
+                    print(f"  [PT] → {r+1}행 {c+1}열 클릭")
+
                 else:
-                    print("[!] P2 모드에서만 사용 가능 (batter_p2 / pitcher_p2)")
+                    print("[!] P2/P3(batter) 모드에서만 사용 가능")
 
         self.stream.stop()
         cv2.destroyAllWindows()
