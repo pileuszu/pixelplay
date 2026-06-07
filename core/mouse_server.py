@@ -176,24 +176,39 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, PORT))
     srv.listen(5)
+    srv.settimeout(1.0)   # 1초마다 accept() 풀려 Ctrl+C 작동
 
-    while True:
-        conn, addr = srv.accept()
-        print(f"\n[+] Connected: {addr}", flush=True)
-        with conn:
-            data = b''
-            while True:
-                chunk = conn.recv(4096)
-                if not chunk:
-                    break
-                data += chunk
-                while b'\n' in data:
-                    line, data = data.split(b'\n', 1)
+    try:
+        while True:
+            try:
+                conn, addr = srv.accept()
+            except socket.timeout:
+                continue   # 타임아웃 → 다시 accept 대기 (Ctrl+C 체크)
+
+            print(f"\n[+] Connected: {addr}", flush=True)
+            with conn:
+                data = b''
+                while True:
                     try:
-                        cmd    = json.loads(line.decode())
-                        result = handle_command(cmd)
-                        conn.sendall((json.dumps({'result': result}) + '\n').encode())
-                    except Exception as e:
-                        print(f"  [!] error: {e}", flush=True)
-                        conn.sendall((json.dumps({'error': str(e)}) + '\n').encode())
-        print(f"[-] Disconnected: {addr}", flush=True)
+                        chunk = conn.recv(4096)
+                    except (ConnectionResetError, OSError):
+                        break
+                    if not chunk:
+                        break
+                    data += chunk
+                    while b'\n' in data:
+                        line, data = data.split(b'\n', 1)
+                        try:
+                            cmd    = json.loads(line.decode())
+                            result = handle_command(cmd)
+                            conn.sendall((json.dumps({'result': result}) + '\n').encode())
+                        except Exception as e:
+                            print(f"  [!] error: {e}", flush=True)
+                            try:
+                                conn.sendall((json.dumps({'error': str(e)}) + '\n').encode())
+                            except Exception:
+                                pass
+            print(f"[-] Disconnected: {addr}", flush=True)
+
+    except KeyboardInterrupt:
+        print("\n[*] Stopped by user (Ctrl+C)", flush=True)
