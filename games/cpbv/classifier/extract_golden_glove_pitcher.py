@@ -68,17 +68,25 @@ def _init_ocr():
 
 
 def _ocr_crop(img_bgr):
-    """단일 bbox Surya OCR → [(text, confidence), ...]"""
+    """단일 bbox Surya OCR → [(text, confidence), ...]
+    calibrate_gui.py의 _ocr_crop과 동일한 방식
+    """
     _init_ocr()
     h, w = img_bgr.shape[:2]
     if h == 0 or w == 0:
         return []
     rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(rgb)
-    result = _rec_pred([pil_img], bboxes=[[[0, 0, w, h]]], math_mode=False)
-    if not result or not result[0].text_lines:
+    results = _rec_pred([pil_img], bboxes=[[[0, 0, w, h]]], math_mode=False)
+    if not results or not results[0].text_lines:
         return []
-    return [(ln.text, ln.confidence) for ln in result[0].text_lines
+    def _clean(t):
+        t = re.sub(r'<[^>]+>', '', t)          # HTML 태그
+        t = re.sub(r'\\[a-zA-Z,;!]+', '', t)  # LaTeX 커맨드
+        t = re.sub(r'[{}^_]', '', t)           # LaTeX 괄호
+        return t.strip()
+    return [(_clean(ln.text), ln.confidence)
+            for ln in results[0].text_lines
             if ln.confidence > 0.25]
 
 
@@ -213,7 +221,13 @@ def _load_team_templates():
         if not fname.endswith('.png'):
             continue
         team_name = os.path.splitext(fname)[0]
-        img = cv2.imread(os.path.join(tmpl_dir, fname))
+        fpath = os.path.join(tmpl_dir, fname)
+        # Windows에서 한글 경로 처리: np.fromfile + imdecode
+        try:
+            buf = np.fromfile(fpath, dtype=np.uint8)
+            img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        except Exception:
+            img = None
         if img is not None:
             _team_templates[team_name] = img
 
