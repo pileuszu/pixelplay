@@ -511,19 +511,24 @@ class CalibrationGUI:
             self.ocr_status = 'OCR 실행 중...'
             self.ocr_boxes = []
             try:
-                from surya.recognition import RecognitionPredictor
-                from surya.detection import DetectionPredictor
+                from surya.ocr import run_ocr
+                from surya.model.detection.model import load_model as load_det_model, load_processor as load_det_processor
+                from surya.model.recognition.model import load_model as load_rec_model
+                from surya.model.recognition.processor import load_processor as load_rec_processor
                 from PIL import Image as _PilImg
 
-                rec_pred = RecognitionPredictor()
-                det_pred = DetectionPredictor()
+                det_processor = load_det_processor()
+                det_model = load_det_model()
+                rec_processor = load_rec_processor()
+                rec_model = load_rec_model()
 
                 gf = self.frame[STREAM_GAME_Y1:STREAM_GAME_Y2,
                                 STREAM_GAME_X1:STREAM_GAME_X2]
                 gf_rgb = cv2.cvtColor(gf, cv2.COLOR_BGR2RGB)
                 pil_gf = _PilImg.fromarray(gf_rgb)
 
-                rec_results = rec_pred([pil_gf], [['ko', 'en']], det_predictor=det_pred)
+                langs = [['ko', 'en']]
+                rec_results = run_ocr([pil_gf], langs, det_model, det_processor, rec_model, rec_processor)
 
                 detected = []
                 auto_set = []
@@ -683,21 +688,27 @@ class CalibrationGUI:
             print(f"  OCR 추출 테스트 │ {self.mode_label}")
             print(f"{'─'*52}")
             try:
-                from surya.recognition import RecognitionPredictor
-                from surya.detection import DetectionPredictor
+                from surya.ocr import run_ocr
+                from surya.model.detection.model import load_model as load_det_model, load_processor as load_det_processor
+                from surya.model.recognition.model import load_model as load_rec_model
+                from surya.model.recognition.processor import load_processor as load_rec_processor
                 from PIL import Image as _PilImg
-                rec_predictor = RecognitionPredictor()
-                det_predictor = DetectionPredictor()
+
+                det_processor = load_det_processor()
+                det_model = load_det_model()
+                rec_processor = load_rec_processor()
+                rec_model = load_rec_model()
                 regions = self.regions[self.mode]
 
                 def _ocr_crop(crop_bgr):
                     """crop(BGR numpy) → [(text, conf), ...]"""
                     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
                     pil_img = _PilImg.fromarray(rgb)
-                    predictions = rec_predictor([pil_img], [['ko', 'en']],
-                                               det_predictor=det_predictor)
+                    results = run_ocr([pil_img], [['ko', 'en']],
+                                      det_model, det_processor,
+                                      rec_model, rec_processor)
                     return [(line.text, line.confidence)
-                            for line in predictions[0].text_lines
+                            for line in results[0].text_lines
                             if line.confidence > 0.25]
 
                 # ─── P2 모드: pt_pts 픽셀 포인트 기반 감지 ──────────────────
