@@ -2,45 +2,86 @@
 게임 PC에서 실행하는 마우스/키보드 원격 제어 서버
 개발 PC에서 TCP 명령을 받아 실행합니다.
 
-실행법: python mouse_server.py
+실행법 (관리자 권한 필수):
+  python mouse_server.py
+  또는 터미널을 우클릭 -> '관리자 권한으로 실행' 후 실행
+
+게임이 관리자 권한으로 실행 중이면 이 서버도 반드시 관리자 권한이어야 합니다.
 """
-import socket, json, time, sys
+import socket, json, time, sys, ctypes
 
 try:
     import pyautogui
     pyautogui.FAILSAFE = False
-    pyautogui.PAUSE = 0.05
+    pyautogui.PAUSE = 0
 except ImportError:
-    print("[!] pyautogui가 없습니다. pip install pyautogui 실행 후 다시 시작하세요.")
+    print("[!] pyautogui가 없습니다. pip install pyautogui")
     sys.exit(1)
 
-# win32gui: 창 포커스용 (없어도 동작)
+# win32 계열
 try:
     import win32gui, win32con, win32api
     WIN32_AVAILABLE = True
-    print("[+] win32gui 사용 가능 (창 포커스 지원)")
+    print("[+] win32api 사용 가능")
 except ImportError:
     WIN32_AVAILABLE = False
-    print("[!] win32gui 없음 - pip install pywin32  (포커스 기능 제한)")
+    print("[!] win32api 없음 - pip install pywin32")
 
 HOST = '0.0.0.0'
 PORT = 9999
+
+# ─── 관리자 권한 확인 ────────────────────────────────────────
+try:
+    is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+except Exception:
+    is_admin = False
+
+if not is_admin:
+    print("=" * 55)
+    print("  [경고] 관리자 권한으로 실행하지 않았습니다!")
+    print("  게임이 관리자 권한이면 클릭이 UIPI에 의해 차단됩니다.")
+    print("  -> 터미널을 '관리자 권한으로 실행' 후 다시 시작하세요.")
+    print("=" * 55)
+else:
+    print("[+] 관리자 권한 확인됨")
+
+
+# ─── 클릭 함수 (win32api 우선, pyautogui 폴백) ──────────────
+def do_click(x, y):
+    """
+    1차: win32api.mouse_event  (낮은 레벨, 일부 게임/에뮬레이터 호환)
+    2차: pyautogui.click       (폴백)
+    """
+    # 커서 이동
+    ctypes.windll.user32.SetCursorPos(x, y)
+    time.sleep(0.05)
+
+    if WIN32_AVAILABLE:
+        try:
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
+            time.sleep(0.05)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,   0, 0)
+            return 'win32api'
+        except Exception as e:
+            print(f"  [!] win32api 클릭 실패: {e}")
+
+    # 폴백
+    pyautogui.click(x, y)
+    return 'pyautogui'
 
 
 def focus_window_at(x, y):
     """화면 좌표 (x,y)에 있는 창을 최상위로 올림"""
     if not WIN32_AVAILABLE:
-        return False, "win32gui 없음"
+        return False, "win32api 없음"
     try:
-        hwnd = win32gui.WindowFromPoint((x, y))
+        hwnd   = win32gui.WindowFromPoint((x, y))
         if not hwnd:
             return False, "창 없음"
-        # 최상위 부모 창 찾기
-        root = win32gui.GetAncestor(hwnd, 3)  # GA_ROOTOWNER
+        root   = win32gui.GetAncestor(hwnd, 3)   # GA_ROOTOWNER
         target = root if root else hwnd
         title  = win32gui.GetWindowText(target)
 
-        # 최소화되어 있으면 복원
         if win32gui.IsIconic(target):
             win32gui.ShowWindow(target, win32con.SW_RESTORE)
             time.sleep(0.1)
@@ -63,15 +104,17 @@ def handle_command(cmd):
         return 'focused' if ok else msg
 
     elif action == 'move':
-        pyautogui.moveTo(x, y, duration=0.1)
+        ctypes.windll.user32.SetCursorPos(x, y)
         print(f"  [move] ({x},{y})")
 
     elif action == 'click':
-        pyautogui.click(x, y)
-        print(f"  [click] ({x},{y})")
+        method = do_click(x, y)
+        print(f"  [click/{method}] ({x},{y})")
 
     elif action == 'double_click':
-        pyautogui.doubleClick(x, y)
+        do_click(x, y)
+        time.sleep(0.05)
+        do_click(x, y)
         print(f"  [dbl_click] ({x},{y})")
 
     elif action == 'scroll':
@@ -112,7 +155,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
                 while b'\n' in data:
                     line, data = data.split(b'\n', 1)
                     try:
-                        cmd = json.loads(line.decode())
+                        cmd    = json.loads(line.decode())
                         result = handle_command(cmd)
                         conn.sendall((json.dumps({'result': result}) + '\n').encode())
                     except Exception as e:

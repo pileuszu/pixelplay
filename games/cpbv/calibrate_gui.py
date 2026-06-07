@@ -650,7 +650,7 @@ class CalibrationGUI:
                         m   = re.search(r'\d+', str(raw))
                         if m: nums.append(int(m.group()))
                     if nums:
-                        computed = round(sum(nums) / len(nums), 1)
+                        computed = int(round(sum(nums) / len(nums)))
                         display  = (f"{computed}  "
                                     f"({len(nums)}/{len(stat_keys)}스탯 평균)")
                         self.extract_results['overall_area'] = str(computed)
