@@ -327,6 +327,13 @@ class CalibrationGUI:
         # 로고 저장 모드
         self.logo_save_mode = False
 
+        # 잠재력 픽셀 포인트 픽커
+        # pt_pts[mode][bar_key] = [(rx,ry), (rx,ry), (rx,ry)]  # 슬롯 2,3,4
+        self.pt_pts: dict = {}
+        self.pt_pick_queue: list = []   # [(mode, bar_key, slot_idx), ...]
+        self.pt_pick_idx: int  = -1     # 현재 찍어야 할 인덱스
+        self._load_pt_pts()
+
     # ── 속성 ──────────────────────────────────────────────────────────
     @property
     def mode(self):
@@ -347,10 +354,23 @@ class CalibrationGUI:
         self.click_pts.update({k: tuple(v) for k, v in data.get('click_pts', {}).items()})
         print(f"[+] 오버라이드 로드됨")
 
+    def _load_pt_pts(self):
+        """override JSON의 pt_pts 섹션 로드"""
+        if not os.path.exists(OVERRIDE_PATH): return
+        with open(OVERRIDE_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        for mk, bars in data.get('pt_pts', {}).items():
+            if mk not in self.pt_pts:
+                self.pt_pts[mk] = {}
+            for bk, pts in bars.items():
+                self.pt_pts[mk][bk] = [tuple(p) for p in pts]
+
     def save(self):
         data = {
             'regions':   {m: {k: list(v) for k, v in rgs.items()} for m, rgs in self.regions.items()},
             'click_pts': {k: list(v) for k, v in self.click_pts.items()},
+            'pt_pts':    {m: {bk: [list(p) for p in pts] for bk, pts in bars.items()}
+                          for m, bars in self.pt_pts.items()},
         }
         with open(OVERRIDE_PATH, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -399,6 +419,29 @@ class CalibrationGUI:
                     self.drag_orig = self.click_pts[self.selected[1]]
                 else:
                     self.drag_orig = self.regions[self.selected[1]][self.selected[2]]
+
+            # 포인트 픽커 모드
+            if self.pt_pick_idx >= 0 and self.pt_pick_idx < len(self.pt_pick_queue):
+                mode, bar_key, slot_idx = self.pt_pick_queue[self.pt_pick_idx]
+                # 게임 창 내 상대 좌표
+                rx = (x - STREAM_GAME_X1) / max(GAME_W, 1)
+                ry = (y - STREAM_GAME_Y1) / max(GAME_H, 1)
+                if mode not in self.pt_pts:
+                    self.pt_pts[mode] = {}
+                if bar_key not in self.pt_pts[mode]:
+                    self.pt_pts[mode][bar_key] = [None, None, None]
+                self.pt_pts[mode][bar_key][slot_idx] = (round(rx,4), round(ry,4))
+                slot_num = slot_idx + 2  # 슬롯 2,3,4
+                print(f"  [PT] {bar_key} 슬롯{slot_num} → ({rx:.4f}, {ry:.4f})")
+                self.pt_pick_idx += 1
+                if self.pt_pick_idx >= len(self.pt_pick_queue):
+                    self.pt_pick_idx = -1
+                    print("  [PT] 모든 포인트 설정 완료! S키로 저장하세요.")
+                return
+
+            # 일반 드래그 시작
+            self.selected, self.drag_type = self._find_hit(x, y)
+            self.drag_start = (x, y)
 
         elif event == cv2.EVENT_RBUTTONDOWN:
             # 우클릭: 클릭 포인트 위에서 클릭 테스트
@@ -567,9 +610,9 @@ class CalibrationGUI:
 
     def _save_team_logo(self, team_name):
         """team_logo 영역 크롭을 team_templates/팀이름.png로 저장"""
-        region = self.regions.get(self.mode, {}).get('team_logo')
+        # batter_p1 의 team_logo 우선, 없으면 다른 모드에서 탐색
+        region = self.regions.get('batter_p1', {}).get('team_logo')
         if region is None:
-            # 어떤 모드든 team_logo가 있으면 사용
             for mode_key, regs in self.regions.items():
                 if 'team_logo' in regs:
                     region = regs['team_logo']
@@ -625,7 +668,22 @@ class CalibrationGUI:
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
                     # ─── 스킵 항목 (추출 불필요) ──────────────────────────────
-                    if key in ('team_logo', 'overall_area', 'stamina_bar'):
+                    if key in ('overall_area', 'stamina_bar'):
+                        continue
+
+                    # ─── 팀 로고: 템플릿 매칭 ──────────────────────────────────
+                    if key == 'team_logo':
+                        team, score, warn = self._match_team_logo(crop)
+                        if team and score >= 0.5:
+                            display = f"{team}  ({score:.0%})"
+                            self.extract_results[key] = team
+                        elif team:
+                            display = f"{team}?  ({score:.0%}) ← 저신도"
+                            self.extract_results[key] = team
+                        else:
+                            display = warn or '(인식 실패)'
+                            self.extract_results[key] = ''
+                        print(f"  {key:<22} : {display}")
                         continue
 
                     # ─── *_bar: 잠재력 총 칸 수 (P2 모드만) ──────────────────────
@@ -865,9 +923,22 @@ class CalibrationGUI:
                     self._save_team_logo(match)
                 self.logo_save_mode = False
             elif key == ord('c'):
-                self.ocr_boxes = []; self.ocr_status = ''
-                self.extract_results = {}; self.extract_status = ''
-                self.last_click_label = ''
+                # C: P2 모드에서 포인트 픽커 시작
+                if self.mode in ('batter_p2', 'pitcher_p2'):
+                    bar_keys = [k for k in self.regions[self.mode] if k.endswith('_bar')]
+                    self.pt_pick_queue = [
+                        (self.mode, bk, si)
+                        for bk in bar_keys
+                        for si in range(3)  # 슬롯 2,3,4
+                    ]
+                    self.pt_pick_idx = 0
+                    total = len(self.pt_pick_queue)
+                    print(f"  [PT] 포인트 픽커 시작 ({total}개 포인트)")
+                    print(f"  [PT] 클릭: {self.pt_pick_queue[0][1]} 슬롯{self.pt_pick_queue[0][2]+2}")
+                else:
+                    self.ocr_boxes = []; self.ocr_status = ''
+                    self.extract_results = {}; self.extract_status = ''
+                    self.last_click_label = ''
 
         self.stream.stop()
         cv2.destroyAllWindows()
