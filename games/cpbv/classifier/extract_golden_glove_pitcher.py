@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.join(_HERE, '..', '..', '..'))
 from games.cpbv.config_cpbv import (
     STREAM_URL, MOUSE_HOST, MOUSE_PORT,
     STREAM_GAME_X1, STREAM_GAME_Y1, STREAM_GAME_X2, STREAM_GAME_Y2,
+    WINDOW_LEFT, WINDOW_TOP, WINDOW_WIDTH, WINDOW_HEIGHT,
     PITCHER_P1, PITCHER_P3, UI,
     TEAM_TEMPLATES_DIR, POTENTIAL_NAMES_PITCHER,
 )
@@ -130,40 +131,41 @@ def ocr_number(frame, region):
     return int(m.group()) if m else None
 
 
-# ─── 스트림 스레드 ───────────────────────────────────────────────────────────
+# ─── 스트림 스레드 (calibrate_gui.py와 동일) ───────────────────────────────────
 class StreamThread(threading.Thread):
     def __init__(self, url):
         super().__init__(daemon=True)
         self.url = url
-        self._cap = None
         self._frame = None
-        self._lock = threading.Lock()
-        self.ok = False
+        self._lock  = threading.Lock()
+        self._stop  = threading.Event()
+        self.ok     = False
 
     def run(self):
-        self._cap = cv2.VideoCapture(self.url)
-        if not self._cap.isOpened():
+        cap = cv2.VideoCapture(self.url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.ok = cap.isOpened()
+        if not self.ok:
             print(f"[!] 스트림 연결 실패: {self.url}")
             return
-        self.ok = True
-        while True:
-            ret, frame = self._cap.read()
-            if not ret:
+        while not self._stop.is_set():
+            ret, frame = cap.read()
+            if ret:
+                with self._lock:
+                    self._frame = frame
+            else:
                 time.sleep(0.05)
-                continue
-            with self._lock:
-                self._frame = frame
+        cap.release()
 
     def get_latest(self):
         with self._lock:
             return self._frame.copy() if self._frame is not None else None
 
     def stop(self):
-        if self._cap:
-            self._cap.release()
+        self._stop.set()
 
 
-# ─── 마우스 클라이언트 ───────────────────────────────────────────────────────
+# ─── 마우스 클라이언트 (calibrate_gui.py와 동일) ─────────────────────────────
 class MouseClient:
     def __init__(self, host, port):
         self.host = host
@@ -171,13 +173,14 @@ class MouseClient:
         self.sock = None
         self.connected = False
         if host:
-            self._connect()
+            self._try_connect()
 
-    def _connect(self):
+    def _try_connect(self):
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(3)
-            self.sock.connect((self.host, self.port))
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((self.host, self.port))
+            self.sock = s
             self.connected = True
             print(f"[+] 마우스 서버 연결: {self.host}:{self.port}")
         except Exception as e:
@@ -186,23 +189,31 @@ class MouseClient:
 
     def _send(self, cmd):
         if not self.sock:
-            return None
+            return
         try:
+            self.sock.settimeout(2.0)
             self.sock.sendall((json.dumps(cmd) + '\n').encode())
-            resp = self.sock.recv(1024)
-            return json.loads(resp.decode())
+            self.sock.recv(1024)
         except Exception:
-            self._connect()
-            return None
+            self.connected = False
+            self.sock = None
 
-    def click_ratio(self, rx, ry):
-        """창 내 비율 좌표로 클릭"""
-        ax = int(STREAM_GAME_X1 + rx * GAME_W)
-        ay = int(STREAM_GAME_Y1 + ry * GAME_H)
-        return self._send({'action': 'click', 'x': ax, 'y': ay})
+    def click_ratio(self, rx, ry, focus_first=True):
+        """GUI와 동일: 게임 PC 실제 윈도우 좌표로 변환"""
+        if not self.connected:
+            self._try_connect()
+        abs_x = int(WINDOW_LEFT + rx * WINDOW_WIDTH)
+        abs_y = int(WINDOW_TOP  + ry * WINDOW_HEIGHT)
+        if focus_first:
+            cx = int(WINDOW_LEFT + WINDOW_WIDTH  * 0.5)
+            cy = int(WINDOW_TOP  + WINDOW_HEIGHT * 0.5)
+            self._send({'action': 'focus_window', 'x': cx, 'y': cy})
+            time.sleep(0.15)
+        self._send({'action': 'click', 'x': abs_x, 'y': abs_y})
+        return abs_x, abs_y
 
     def click_ui(self, key):
-        """UI 딕셔너리 키로 클릭 (next_player, next_page 등)"""
+        """UI 디셔너리 키로 클릭 (next_player, next_page 등)"""
         rx, ry = UI[key]
         return self.click_ratio(rx, ry)
 
