@@ -816,7 +816,7 @@ class CalibrationGUI:
                     fh, fw = self.frame.shape[:2]
                     pairs = []
 
-                    # ① 체력바: 색상 구간 수 카운트 (5=CP마무리, 4=RP중계, 3=SP선발)
+                    # ① 체력바: 구간 수 + 각 구간별 너비 비율 측정
                     sbar = regions.get('stamina_bar_detail')
                     if sbar:
                         bx1, by1, bx2, by2 = rect_px(*sbar)
@@ -826,18 +826,36 @@ class CalibrationGUI:
                         bh, bw = bar_crop.shape[:2]
                         if bw > 0:
                             mid_y = bh // 2
-                            # 5구간을 균등 분할해 각 구간 중심 픽셀 밝기 체크
-                            seg_count = 0
-                            for seg_i in range(5):
-                                seg_cx = int(bw * (seg_i + 0.5) / 5)
-                                seg_cx = max(0, min(bw-1, seg_cx))
-                                b, g, r = bar_crop[mid_y, seg_cx]
-                                brightness = (int(r) + int(g) + int(b)) / 3
-                                if brightness > 40:   # 켜진 구간
-                                    seg_count += 1
-                            role = {5: 'CP(마무리)', 4: 'RP(중계)', 3: 'SP(선발)'}.get(seg_count, f'?({seg_count}구간)')
-                            self.extract_results['stamina_bar_detail'] = str(seg_count)
-                            print(f"  {'stamina_bar_detail':<22} : {seg_count}구간 → {role}")
+                            # HSV Hue로 색상 분류: 0=어두움 1=빨강 2=오렌지 3=노랑 4=초록 5=파랑/시안
+                            hsv_bar = cv2.cvtColor(bar_crop, cv2.COLOR_BGR2HSV)
+                            def _hue_zone(pix_hsv):
+                                h, s, v = int(pix_hsv[0]), int(pix_hsv[1]), int(pix_hsv[2])
+                                if v < 40 or s < 40: return 0   # 어두움(빈 공간)
+                                if h < 10 or h > 165: return 1  # 빨강
+                                if h < 22: return 2              # 오렌지
+                                if h < 38: return 3              # 노랑
+                                if h < 85: return 4              # 초록
+                                return 5                          # 파랑/시안
+                            # 픽셀별 구간 레이블
+                            zones = [_hue_zone(hsv_bar[mid_y, xi]) for xi in range(bw)]
+                            # 연속 구간 그룹화 (어두움 제외)
+                            segments = []
+                            cur_zone, seg_start = zones[0], 0
+                            for xi, z in enumerate(zones[1:], 1):
+                                if z != cur_zone:
+                                    if cur_zone != 0:
+                                        segments.append((cur_zone, seg_start, xi))
+                                    cur_zone, seg_start = z, xi
+                            if cur_zone != 0:
+                                segments.append((cur_zone, seg_start, bw))
+                            # 전체 채움 폭 계산 + 각 구간 비율
+                            total_filled = sum(e - s for _, s, e in segments)
+                            seg_count = len(segments)
+                            ratios = [round((e - s) / max(total_filled, 1), 3) for _, s, e in segments]
+                            role = {5: 'CP', 4: 'RP', 3: 'SP'}.get(seg_count, f'?')
+                            ratios_str = ' '.join(str(r) for r in ratios)
+                            self.extract_results['stamina_bar_detail'] = f"{seg_count}:{ratios_str}"
+                            print(f"  {'stamina_bar_detail':<22} : {seg_count}구간({role})  비율=[{ratios_str}]")
 
                     parea = regions.get('pitches_area')
                     if parea:
