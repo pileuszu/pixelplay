@@ -70,14 +70,15 @@ def do_click(x, y):
 
 
 def focus_window_at(x, y):
-    """Bring the window at screen coord (x,y) to foreground"""
+    """Bring the window at screen coord (x,y) to foreground.
+    Uses Alt-key trick to bypass Windows foreground lock."""
     if not WIN32_AVAILABLE:
         return False, "win32api not available"
     try:
         hwnd   = win32gui.WindowFromPoint((x, y))
         if not hwnd:
             return False, "no window at coords"
-        root   = win32gui.GetAncestor(hwnd, 3)  # GA_ROOTOWNER
+        root   = win32gui.GetAncestor(hwnd, 3)   # GA_ROOTOWNER
         target = root if root else hwnd
         title  = win32gui.GetWindowText(target)
 
@@ -85,9 +86,44 @@ def focus_window_at(x, y):
             win32gui.ShowWindow(target, win32con.SW_RESTORE)
             time.sleep(0.1)
 
+        # Method 1: Alt key trick (bypasses foreground lock)
+        # Pressing Alt makes us temporarily the foreground process
+        try:
+            import win32process
+            fg_hwnd   = win32gui.GetForegroundWindow()
+            fg_tid    = win32process.GetWindowThreadProcessId(fg_hwnd)[0] if fg_hwnd else 0
+            my_tid    = win32api.GetCurrentThreadId()
+            tgt_tid   = win32process.GetWindowThreadProcessId(target)[0]
+
+            # Attach input queues so we can steal focus
+            if fg_tid and fg_tid != my_tid:
+                win32process.AttachThreadInput(fg_tid, my_tid, True)
+            if tgt_tid and tgt_tid != my_tid:
+                win32process.AttachThreadInput(tgt_tid, my_tid, True)
+
+            win32gui.BringWindowToTop(target)
+            win32gui.SetForegroundWindow(target)
+            win32gui.SetActiveWindow(target)
+            time.sleep(0.05)
+
+            if fg_tid and fg_tid != my_tid:
+                win32process.AttachThreadInput(fg_tid, my_tid, False)
+            if tgt_tid and tgt_tid != my_tid:
+                win32process.AttachThreadInput(tgt_tid, my_tid, False)
+
+            return True, f"focused [{title}] hwnd={target}"
+
+        except Exception:
+            pass
+
+        # Method 2: Simple Alt keypress trick (fallback)
+        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_EXTENDEDKEY, 0)
+        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_EXTENDEDKEY | win32con.KEYEVENTF_KEYUP, 0)
+        time.sleep(0.05)
         win32gui.SetForegroundWindow(target)
         time.sleep(0.05)
-        return True, f"focused [{title}] hwnd={target}"
+        return True, f"focused [{title}] hwnd={target} (alt-trick)"
+
     except Exception as e:
         return False, f"focus failed: {e}"
 
