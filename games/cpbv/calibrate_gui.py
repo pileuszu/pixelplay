@@ -737,6 +737,60 @@ class CalibrationGUI:
         except Exception as e:
             print(f"[!] 로고 저장 실패: {e}")
 
+    def _save_grade_templates(self):
+        """pitcher_p3 모드 + pitch*_grade 영역 선택 상태에서 G키:
+        선택된 영역을 크롭 → 등급 입력 → {slot}_{grade}.png 저장.
+        예) pitch3_grade 선택 + 'A' 입력 → pitch3_A.png"""
+        import os as _os
+        save_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                 'assets', 'grades', 'pitcher')
+        _os.makedirs(save_dir, exist_ok=True)
+
+        # 선택된 영역이 pitch*_grade인지 확인
+        sel_key = None
+        if self.selected and self.selected[0] == 'region':
+            sel_key = self.selected[1]  # e.g. 'pitch3_grade'
+
+        if sel_key and sel_key.endswith('_grade') and sel_key.startswith('pitch'):
+            # 선택된 특정 등급 영역만 저장
+            regions = self.regions.get('pitcher_p3', {})
+            greg = regions.get(sel_key)
+            if greg is None:
+                print(f"[!] 영역 미정의: {sel_key}"); return
+            if self.frame is None:
+                print("[!] R키로 프레임 캡처 먼저"); return
+
+            fh, fw = self.frame.shape[:2]
+            x1, y1, x2, y2 = rect_px(*greg)
+            x1c, y1c = max(0, x1), max(0, y1)
+            x2c, y2c = min(fw, x2), min(fh, y2)
+            if x2c <= x1c or y2c <= y1c:
+                print(f"[!] 영역 범위 오류: {sel_key}"); return
+
+            crop = self.frame[y1c:y2c, x1c:x2c]
+            slot = sel_key.replace('_grade', '')  # 'pitch3'
+
+            grade_input = input(f"[G] {sel_key} 등급 (S/A/B/C/D/E): ").strip().upper()
+            if not grade_input or grade_input not in 'SABCDE' or len(grade_input) != 1:
+                print("[!] 취소 또는 잘못된 입력"); return
+
+            fname = f"{slot}_{grade_input}.png"
+            path = _os.path.join(save_dir, fname)
+            try:
+                from PIL import Image as _Img
+                rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                _Img.fromarray(rgb).save(path)
+                print(f"[G] 저장: {fname}  ({crop.shape[1]}×{crop.shape[0]}px)")
+                print(f"    경로: {path}")
+            except Exception as e:
+                print(f"[!] 저장 실패: {e}")
+        else:
+            # 선택 없음: 사용법 안내
+            print("[G] pitcher_p3 모드에서 pitch*_grade 영역을 먼저 선택하세요.")
+            print("    예) pitch1_grade 클릭 → G → 'A' 입력 → pitch1_A.png 저장")
+            print("    5개 영역 × 원하는 등급 수 만큼 반복")
+
+
     def start_ocr_extract(self):
         """현재 모드의 각 영역 크롭 → OCR → 터미널+GUI 표시"""
         if self.extract_running:
@@ -1275,6 +1329,12 @@ class CalibrationGUI:
                     self._test_click(k, rx, ry)
                 else:
                     print("[!] 먼저 클릭 포인트(점)를 선택하세요")
+            elif key == ord('g'):
+                # G: pitcher_p3 모드에서 등급 배지 템플릿 저장
+                if self.mode == 'pitcher_p3' and self.frame is not None:
+                    self._save_grade_templates()
+                else:
+                    print("[!] pitcher_p3 모드에서만 사용 가능")
             elif key == ord('v'):
                 self.logo_save_mode = not self.logo_save_mode
                 if self.logo_save_mode:

@@ -32,6 +32,7 @@ from PIL import Image
 
 # ─── 경로 설정 ──────────────────────────────────────────────────────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
+GRADE_TEMPLATES_DIR = os.path.join(_HERE, '..', 'assets', 'grades', 'pitcher')
 sys.path.insert(0, os.path.join(_HERE, '..', '..', '..'))
 
 from games.cpbv.config_cpbv import (
@@ -217,6 +218,63 @@ class MouseClient:
         """UI 디셔너리 키로 클릭 (next_player, next_page 등)"""
         rx, ry = UI[key]
         return self.click_ratio(rx, ry)
+
+
+# ─── 등급 감지 (템플릿 매칭) ─────────────────────────────────────────────────
+_grade_templates: dict = {}
+
+def _load_grade_templates():
+    """assets/grades/pitcher/*.png 로드
+    파일명: pitch{n}_{grade}.png (예: pitch1_A.png, pitch3_B.png)
+    또는 {grade}.png 단순 형식도 지원.
+    같은 등급의 template 여러 개 → 리스트로 저장"""
+    global _grade_templates
+    if _grade_templates:
+        return
+    if not os.path.exists(GRADE_TEMPLATES_DIR):
+        return
+    for fname in os.listdir(GRADE_TEMPLATES_DIR):
+        if not fname.lower().endswith('.png'):
+            continue
+        stem = os.path.splitext(fname)[0].upper()  # 'PITCH1_A' or 'A'
+        # 등급 글자 추출: 마지막 '_' 뒤 또는 전체
+        if '_' in stem:
+            grade = stem.rsplit('_', 1)[-1]  # 'PITCH1_A' → 'A'
+        else:
+            grade = stem
+        if not grade or grade[0] not in 'SABCDE':
+            continue
+        grade = grade[0]
+        fpath = os.path.join(GRADE_TEMPLATES_DIR, fname)
+        try:
+            buf = np.fromfile(fpath, dtype=np.uint8)
+            img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        except Exception:
+            img = None
+        if img is not None:
+            _grade_templates.setdefault(grade, []).append(img)
+
+
+def match_grade(crop_bgr):
+    """등급 crop → 템플릿 매칭. 같은 등급 templates 중 최고 점수 사용.
+    templates 없으면 None 반환 (OCR fallback)"""
+    _load_grade_templates()
+    if not _grade_templates:
+        return None
+    if crop_bgr is None or crop_bgr.size == 0:
+        return None
+    best_grade, best_score = '?', 0.0
+    for grade, tmpl_list in _grade_templates.items():
+        for tmpl in tmpl_list:
+            try:
+                t = cv2.resize(tmpl, (crop_bgr.shape[1], crop_bgr.shape[0]))
+                res = cv2.matchTemplate(crop_bgr, t, cv2.TM_CCOEFF_NORMED)
+                score = float(res.max())
+                if score > best_score:
+                    best_score, best_grade = score, grade
+            except Exception:
+                continue
+    return best_grade if best_score > 0.45 else None
 
 
 # ─── 팀 감지 (템플릿 매칭) ───────────────────────────────────────────────────
@@ -433,20 +491,24 @@ def extract_pitches(frame, regions=None):
                         name = _classify_pitch_name(nm.group())
                         break
 
-        # 등급 OCR (배지 영역 고배율)
+        # 등급: 템플릿 매칭 우선, 없으면 OCR fallback
         gcrop = crop_region(frame, greg)
         grade = ''
         if gcrop is not None:
             gh, gw = gcrop.shape[:2]
             if gw > 0 and gh > 0:
-                gscale = max(6, 80 // max(gh, 1))
-                gup = cv2.resize(gcrop, (gw * gscale, gh * gscale),
-                                 interpolation=cv2.INTER_CUBIC)
-                gtexts = _ocr_crop(gup)
-                graw = ' '.join(t for t, _ in gtexts) if gtexts else ''
-                gm = re.search(r'[SABCDEsabcde]', graw)
-                if gm:
-                    grade = gm.group().upper()
+                # 1) 템플릿 매칭
+                grade = match_grade(gcrop) or ''
+                # 2) OCR fallback
+                if not grade:
+                    gscale = max(6, 80 // max(gh, 1))
+                    gup = cv2.resize(gcrop, (gw * gscale, gh * gscale),
+                                     interpolation=cv2.INTER_CUBIC)
+                    gtexts = _ocr_crop(gup)
+                    graw = ' '.join(t for t, _ in gtexts) if gtexts else ''
+                    gm = re.search(r'[SABCDEsabcde]', graw)
+                    if gm:
+                        grade = gm.group().upper()
 
         if name:
             pitches.append({'name': name, 'grade': grade or '?'})
