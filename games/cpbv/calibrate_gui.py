@@ -929,7 +929,12 @@ class CalibrationGUI:
                     self._save_team_logo(match)
                 self.logo_save_mode = False
             elif key == ord('c'):
-                # C: P2 모드에서 포인트 픽커 시작
+                # C: 화면 클리어
+                self.ocr_boxes = []; self.ocr_status = ''
+                self.extract_results = {}; self.extract_status = ''
+                self.last_click_label = ''
+            elif key == ord('f'):
+                # F: P2 모드에서 픽셀 포인트 픽커 시작
                 if self.mode in ('batter_p2', 'pitcher_p2'):
                     bar_keys = [k for k in self.regions[self.mode] if k.endswith('_bar')]
                     self.pt_pick_queue = [
@@ -942,9 +947,7 @@ class CalibrationGUI:
                     print(f"  [PT] 포인트 픽커 시작 ({total}개 포인트)")
                     print(f"  [PT] 클릭: {self.pt_pick_queue[0][1]} 슬롯{self.pt_pick_queue[0][2]+2}")
                 else:
-                    self.ocr_boxes = []; self.ocr_status = ''
-                    self.extract_results = {}; self.extract_status = ''
-                    self.last_click_label = ''
+                    print("[!] P2 모드에서만 사용 가능 (batter_p2 / pitcher_p2)")
 
         self.stream.stop()
         cv2.destroyAllWindows()
