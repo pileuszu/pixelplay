@@ -356,8 +356,45 @@ def extract_stamina(frame, region):
     }
 
 
+# 알려진 구종명 목록 (OCR 결과를 이 목록으로 분류)
+KNOWN_PITCH_NAMES = [
+    '포심', '투심', '커터', '싱커',                   # 속구 계열
+    '체인지업', '서클체인지업', '슬라이더', '커브', '포크', '스플리터',  # 변화 계열
+]
+
+def _classify_pitch_name(ocr_text: str) -> str:
+    """OCR 결과 → 알려진 구종명으로 분류 (difflib 기반)"""
+    from difflib import SequenceMatcher
+
+    if not ocr_text:
+        return ''
+
+    best_name = ''
+    best_score = 0.0
+
+    for pitch in KNOWN_PITCH_NAMES:
+        # 1) 직접 포함 확인 (가장 확실)
+        if pitch in ocr_text:
+            return pitch
+        # 2) OCR 텍스트가 구종 이름에 포함 (짧게 잘린 경우)
+        if ocr_text in pitch and len(ocr_text) >= 2:
+            score = len(ocr_text) / len(pitch)
+            if score > best_score:
+                best_score = score
+                best_name = pitch
+        # 3) 유사도 비교
+        score = SequenceMatcher(None, ocr_text, pitch).ratio()
+        if score > best_score:
+            best_score = score
+            best_name = pitch
+
+    # 유사도가 너무 낮으면 OCR 원본 반환
+    return best_name if best_score >= 0.4 else ocr_text
+
+
 def extract_pitches(frame, regions=None):
-    """구종 pitch1~5 이름+등급 OCR → [{'name': ..., 'grade': ...}, ...]"""
+    """구종 pitch1~5 이름+등급 OCR → [{'name': ..., 'grade': ...}, ...]
+    OCR 결과를 알려진 구종명 목록으로 분류하여 정확도 향상"""
     r = regions or PITCHER_P3
     pitches = []
     for i in range(1, 6):
@@ -366,7 +403,7 @@ def extract_pitches(frame, regions=None):
         if not nreg or not greg:
             continue
 
-        # 이름: confidence 가장 높은 한 줄만 사용 (여러 줄 합치면 이름 오염)
+        # 이름: _ocr_crop 직접 사용, confidence 높은 순 → 구종 분류기 통과
         ncrop = crop_region(frame, nreg)
         name = ''
         if ncrop is not None:
@@ -375,12 +412,13 @@ def extract_pitches(frame, regions=None):
                 nscale = max(2, 60 // max(nh, 1))
                 nup = cv2.resize(ncrop, (nw*nscale, nh*nscale), interpolation=cv2.INTER_CUBIC)
                 ntexts = _ocr_crop(nup)
-                # confidence 순 정렬 → 가장 높은 라인에서 한글 추출
+                # confidence 높은 순으로 한글 추출 후 구종명 분류
                 ntexts_sorted = sorted(ntexts, key=lambda x: -x[1])
                 for ntext, _ in ntexts_sorted:
-                    nm = re.search(r'[\uAC00-\uD7A3]{2,}', ntext)
+                    import re as _re
+                    nm = _re.search(r'[\uAC00-\uD7A3]{2,}', ntext)
                     if nm:
-                        name = nm.group()
+                        name = _classify_pitch_name(nm.group())
                         break
 
         # 등급 OCR (배지 영역 고배율)
@@ -402,8 +440,6 @@ def extract_pitches(frame, regions=None):
             pitches.append({'name': name, 'grade': grade or '?'})
 
     return pitches
-
-
 def extract_pitcher_p3(frame, regions=None):
     """투수 Page 3: 체력바 + 구종"""
     r = regions or PITCHER_P3
