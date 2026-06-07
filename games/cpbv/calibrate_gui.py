@@ -78,6 +78,29 @@ OVERALL_STAT_KEYS = {
     'pitcher_p1': ['stat_speed', 'stat_control', 'stat_break', 'stat_stamina', 'stat_stuff', 'stat_defense'],
 }
 
+# 포지션 유효 목록
+BATTER_POSITIONS  = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH']
+PITCHER_POSITIONS = ['SP', 'RP', 'CP']
+
+def _classify_position(raw: str, mode: str) -> str:
+    """OCR 결과를 유효 포지션으로 분류. 매칭 실패 시 raw 반환."""
+    import difflib, re
+    candidates = PITCHER_POSITIONS if mode.startswith('pitcher') else BATTER_POSITIONS
+    # 정제: 대문자 + 숫자/알파벳만
+    cleaned = re.sub(r'[^A-Za-z0-9]', '', raw).upper()
+    # 숫자 OCR 보정: 0→O, 5→S (SS→55 같은 오류 대비)
+    corrected = (cleaned
+                 .replace('0', 'O')
+                 .replace('5', 'S')
+                 .replace('1', 'I'))
+    # 우선 exact match
+    for cand in candidates:
+        if cand == cleaned or cand == corrected:
+            return cand
+    # fuzzy match
+    matches = difflib.get_close_matches(corrected, candidates, n=1, cutoff=0.4)
+    return matches[0] if matches else raw
+
 GAME_W = STREAM_GAME_X2 - STREAM_GAME_X1
 GAME_H = STREAM_GAME_Y2 - STREAM_GAME_Y1
 
@@ -847,6 +870,11 @@ class CalibrationGUI:
                     if v:
                         m = _re.search(r'\d+', v)
                         self.extract_results[nk] = m.group() if m else ''
+
+                # 포지션 분류 (타자: C/1B/2B/3B/SS/LF/CF/RF/DH, 투수: SP/RP/CP)
+                pos_raw = self.extract_results.get('position_area', '')
+                if pos_raw:
+                    self.extract_results['position_area'] = _classify_position(pos_raw, self.mode)
 
                 # 종합 요약 출력
                 print(f"\n{'─'*52}")
