@@ -412,18 +412,9 @@ class CalibrationGUI:
         self.mx, self.my = x, y
 
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.selected, self.drag_type = self._find_hit(x, y)
-            self.drag_start = (x, y)
-            if self.selected:
-                if self.selected[0] == 'click':
-                    self.drag_orig = self.click_pts[self.selected[1]]
-                else:
-                    self.drag_orig = self.regions[self.selected[1]][self.selected[2]]
-
-            # 포인트 픽커 모드
+            # ── 포인트 픽커 모드 우선 처리 ───────────────────────────────
             if self.pt_pick_idx >= 0 and self.pt_pick_idx < len(self.pt_pick_queue):
                 mode, bar_key, slot_idx = self.pt_pick_queue[self.pt_pick_idx]
-                # 게임 창 내 상대 좌표
                 rx = (x - STREAM_GAME_X1) / max(GAME_W, 1)
                 ry = (y - STREAM_GAME_Y1) / max(GAME_H, 1)
                 if mode not in self.pt_pts:
@@ -431,17 +422,25 @@ class CalibrationGUI:
                 if bar_key not in self.pt_pts[mode]:
                     self.pt_pts[mode][bar_key] = [None, None, None]
                 self.pt_pts[mode][bar_key][slot_idx] = (round(rx,4), round(ry,4))
-                slot_num = slot_idx + 2  # 슬롯 2,3,4
+                slot_num = slot_idx + 2
                 print(f"  [PT] {bar_key} 슬롯{slot_num} → ({rx:.4f}, {ry:.4f})")
                 self.pt_pick_idx += 1
                 if self.pt_pick_idx >= len(self.pt_pick_queue):
                     self.pt_pick_idx = -1
-                    print("  [PT] 모든 포인트 설정 완료! S키로 저장하세요.")
+                    print("  [PT] 완료! S키로 저장하세요.")
+                else:
+                    nxt = self.pt_pick_queue[self.pt_pick_idx]
+                    print(f"  [PT] → {nxt[1]} 슬롯{nxt[2]+2} 클릭")
                 return
 
-            # 일반 드래그 시작
+            # ── 일반 드래그 시작 ──────────────────────────────────────────
             self.selected, self.drag_type = self._find_hit(x, y)
             self.drag_start = (x, y)
+            if self.selected:
+                if self.selected[0] == 'click':
+                    self.drag_orig = self.click_pts[self.selected[1]]
+                else:
+                    self.drag_orig = self.regions[self.selected[1]][self.selected[2]]
 
         elif event == cv2.EVENT_RBUTTONDOWN:
             # 우클릭: 클릭 포인트 위에서 클릭 테스트
@@ -956,7 +955,9 @@ class CalibrationGUI:
             elif key == ord('f'):
                 # F: P2 모드에서 픽셀 포인트 픽커 시작
                 if self.mode in ('batter_p2', 'pitcher_p2'):
-                    bar_keys = [k for k in self.regions[self.mode] if k.endswith('_bar')]
+                    names = (POTENTIAL_NAMES_BATTER if self.mode == 'batter_p2'
+                             else POTENTIAL_NAMES_PITCHER)
+                    bar_keys = [n + '_bar' for n in names]
                     self.pt_pick_queue = [
                         (self.mode, bk, si)
                         for bk in bar_keys
@@ -965,7 +966,8 @@ class CalibrationGUI:
                     self.pt_pick_idx = 0
                     total = len(self.pt_pick_queue)
                     print(f"  [PT] 포인트 픽커 시작 ({total}개 포인트)")
-                    print(f"  [PT] 클릭: {self.pt_pick_queue[0][1]} 슬롯{self.pt_pick_queue[0][2]+2}")
+                    if total > 0:
+                        print(f"  [PT] → {self.pt_pick_queue[0][1]} 슬롯{self.pt_pick_queue[0][2]+2} 클릭")
                 else:
                     print("[!] P2 모드에서만 사용 가능 (batter_p2 / pitcher_p2)")
 
