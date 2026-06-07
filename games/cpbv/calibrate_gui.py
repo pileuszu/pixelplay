@@ -810,13 +810,12 @@ class CalibrationGUI:
                     print(f"{'─'*52}\n")
                     return
 
-                # ─── pitcher_p3: 구종 추출 ───────────────────────────────────
+                # ─── pitcher_p3: 체력 + 구종 추출 ────────────────────────────────
                 if self.mode == 'pitcher_p3':
                     import re as _re2
                     fh, fw = self.frame.shape[:2]
-                    pairs = []
 
-                    # ① 체력바: 구간 수 + 각 구간별 너비 비율 측정
+                    # ① 체력바: HSV 구간 감지 + 픽셀 폭 저장
                     sbar = regions.get('stamina_bar_detail')
                     if sbar:
                         bx1, by1, bx2, by2 = rect_px(*sbar)
@@ -826,19 +825,16 @@ class CalibrationGUI:
                         bh, bw = bar_crop.shape[:2]
                         if bw > 0:
                             mid_y = bh // 2
-                            # HSV Hue로 색상 분류: 0=어두움 1=빨강 2=오렌지 3=노랑 4=초록 5=파랑/시안
                             hsv_bar = cv2.cvtColor(bar_crop, cv2.COLOR_BGR2HSV)
                             def _hue_zone(pix_hsv):
                                 h, s, v = int(pix_hsv[0]), int(pix_hsv[1]), int(pix_hsv[2])
-                                if v < 40 or s < 40: return 0   # 어두움(빈 공간)
-                                if h < 10 or h > 165: return 1  # 빨강
-                                if h < 22: return 2              # 오렌지
-                                if h < 38: return 3              # 노랑
-                                if h < 85: return 4              # 초록
-                                return 5                          # 파랑/시안
-                            # 픽셀별 구간 레이블
+                                if v < 40 or s < 40: return 0
+                                if h < 10 or h > 165: return 1
+                                if h < 22: return 2
+                                if h < 38: return 3
+                                if h < 85: return 4
+                                return 5
                             zones = [_hue_zone(hsv_bar[mid_y, xi]) for xi in range(bw)]
-                            # 연속 구간 그룹화 (어두움 제외)
                             segments = []
                             cur_zone, seg_start = zones[0], 0
                             for xi, z in enumerate(zones[1:], 1):
@@ -848,7 +844,6 @@ class CalibrationGUI:
                                     cur_zone, seg_start = z, xi
                             if cur_zone != 0:
                                 segments.append((cur_zone, seg_start, bw))
-                            # 노이즈 필터(3% 미만 제거) + 구간별 픽셀 수 저장
                             total_filled = sum(e - s for _, s, e in segments)
                             segments = [(z, s, e) for z, s, e in segments
                                         if (e - s) / max(total_filled, 1) >= 0.03]
@@ -857,69 +852,63 @@ class CalibrationGUI:
                             role = {5: 'CP', 4: 'RP', 3: 'SP'}.get(seg_count, '?')
                             px_str = ' '.join(str(w) for w in px_widths)
                             self.extract_results['stamina_bar_detail'] = f"{seg_count}:{px_str}"
-                            print(f"  {'stamina_bar_detail':<22} : {seg_count}구간({role})  px=[{px_str}]")
+                            print(f"  {'stamina_bar_detail':<22} : {seg_count}({role})  px=[{px_str}]")
 
-                    parea = regions.get('pitches_area')
-                    if parea:
-                        px1, py1, px2, py2 = rect_px(*parea)
-                        px1 = max(0, min(fw-1, px1)); px2 = max(0, min(fw, px2))
-                        py1 = max(0, min(fh-1, py1)); py2 = max(0, min(fh, py2))
-                        pcrop = self.frame[py1:py2, px1:px2]
-                        ph, pw2 = pcrop.shape[:2]
+                    # ② 구종: pitch1~5 이름/등급 각각 OCR
+                    pairs = []
+                    for i in range(1, 6):
+                        nkey = f'pitch{i}_name'
+                        gkey = f'pitch{i}_grade'
+                        nreg = regions.get(nkey)
+                        greg = regions.get(gkey)
+                        if not nreg or not greg:
+                            continue
 
-                        if pw2 > 0 and ph > 0:
-                            N_ROWS, N_COLS = 3, 2
-                            NAME_W  = 0.75   # 셀 내 이름 영역 너비 비율 (좌측)
-                            BADGE_X = 0.82   # 배지 시작 x 비율 (우측)
+                        # 이름 OCR
+                        nx1, ny1, nx2, ny2 = rect_px(*nreg)
+                        nx1 = max(0, min(fw-1, nx1)); nx2 = max(0, min(fw, nx2))
+                        ny1 = max(0, min(fh-1, ny1)); ny2 = max(0, min(fh, ny2))
+                        ncrop = self.frame[ny1:ny2, nx1:nx2]
+                        nh, nw2 = ncrop.shape[:2]
+                        name = ''
+                        if nw2 > 0 and nh > 0:
+                            nscale = max(3, 200 // max(nh, 1))
+                            nup = cv2.resize(ncrop, (nw2*nscale, nh*nscale),
+                                             interpolation=cv2.INTER_CUBIC)
+                            ntexts = _ocr_crop(nup)
+                            nraw = ' '.join(t for t, _ in ntexts) if ntexts else ''
+                            nm = _re2.search(r'[\uAC00-\uD7A3]{2,}', nraw)
+                            if nm:
+                                name = nm.group()
 
-                            def _grade_from_badge(badge_bgr):
-                                if badge_bgr.size == 0: return None
-                                bh2, bw2 = badge_bgr.shape[:2]
-                                hsv2 = cv2.cvtColor(badge_bgr, cv2.COLOR_BGR2HSV)
-                                cy2, cx2 = bh2 // 2, bw2 // 2
-                                h2, s2, v2 = (int(hsv2[cy2, cx2, 0]),
-                                              int(hsv2[cy2, cx2, 1]),
-                                              int(hsv2[cy2, cx2, 2]))
-                                if v2 < 50 or s2 < 40: return None  # 빈 슬롯
-                                if h2 < 12 or h2 > 165: return 'A'  # 빨강
-                                if h2 < 35:             return 'S'  # 금색
-                                if h2 < 85:             return 'B'  # 초록
-                                return 'C'                           # 파랑
+                        # 등급 OCR
+                        gx1, gy1, gx2, gy2 = rect_px(*greg)
+                        gx1 = max(0, min(fw-1, gx1)); gx2 = max(0, min(fw, gx2))
+                        gy1 = max(0, min(fh-1, gy1)); gy2 = max(0, min(fh, gy2))
+                        gcrop = self.frame[gy1:gy2, gx1:gx2]
+                        gh, gw2 = gcrop.shape[:2]
+                        grade = ''
+                        if gw2 > 0 and gh > 0:
+                            gscale = max(6, 80 // max(gh, 1))
+                            gup = cv2.resize(gcrop, (gw2*gscale, gh*gscale),
+                                             interpolation=cv2.INTER_CUBIC)
+                            gtexts = _ocr_crop(gup)
+                            graw = ' '.join(t for t, _ in gtexts) if gtexts else ''
+                            gm = _re2.search(r'[SABCDsabcd]', graw)
+                            if gm:
+                                grade = gm.group().upper()
 
-                            # 슬롯 순서: (row, col), 최대 5개
-                            slots = [(r, c) for r in range(N_ROWS) for c in range(N_COLS)][:5]
-                            for row_i, col_i in slots:
-                                cx1 = int(pw2 * col_i / N_COLS)
-                                cx2 = int(pw2 * (col_i + 1) / N_COLS)
-                                cy1 = int(ph * row_i / N_ROWS)
-                                cy2 = int(ph * (row_i + 1) / N_ROWS)
-                                cell = pcrop[cy1:cy2, cx1:cx2]
-                                ch, cw = cell.shape[:2]
-                                if cw < 10 or ch < 5:
-                                    continue
-                                # 등급 배지 색상
-                                badge = cell[:, int(cw * BADGE_X):]
-                                grade = _grade_from_badge(badge)
-                                if grade is None:
-                                    continue          # 빈 슬롯 스킵
-                                # 이름 OCR
-                                name_crop = cell[:, :int(cw * NAME_W)]
-                                nh, nw = name_crop.shape[:2]
-                                scale = max(3, 200 // max(nh, 1))
-                                nup = cv2.resize(name_crop, (nw * scale, nh * scale),
-                                                 interpolation=cv2.INTER_CUBIC)
-                                ntexts = _ocr_crop(nup)
-                                nraw = ' '.join(t for t, _ in ntexts) if ntexts else ''
-                                nm = _re2.search(r'[\uAC00-\uD7A3]{2,}', nraw)
-                                if nm:
-                                    pairs.append((nm.group(), grade))
+                        if name and grade:
+                            pairs.append((name, grade))
+                        elif name:
+                            pairs.append((name, '?'))
 
-                    pitches_str = '  '.join(f"{n}:{g.upper()}" for n, g in pairs)
-                    self.extract_results['pitches_area'] = pitches_str
+                    pitches_str = '  '.join(f"{n}:{g}" for n, g in pairs)
+                    self.extract_results['pitches'] = pitches_str
                     if pairs:
-                        print(f"  {'pitches_area':<22} : {pitches_str}")
+                        print(f"  {'pitches':<22} : {pitches_str}")
                     else:
-                        print(f"  {'pitches_area':<22} : (파싱실패)")
+                        print(f"  {'pitches':<22} : (없음)")
 
                     self.extract_status = "완료 (구종)"
                     print(f"{'─'*52}\n")
@@ -1100,35 +1089,6 @@ class CalibrationGUI:
             for cx,cy in [(x1,y1),(x2,y1),(x1,y2),(x2,y2)]:
                 cv2.rectangle(img,(cx-HANDLE_R,cy-HANDLE_R),(cx+HANDLE_R,cy+HANDLE_R),c,-1)
 
-        # pitcher_p3: pitches_area 내부 10분할 오버레이 (이름5 + 배지5)
-        if self.mode == 'pitcher_p3' and 'pitches_area' in self.regions[self.mode]:
-            pr = self.regions[self.mode]['pitches_area']
-            px1, py1, px2, py2 = rect_px(*pr)
-            pw, ph2 = px2 - px1, py2 - py1
-            N_ROWS, N_COLS = 3, 2
-            NAME_W, BADGE_X = 0.75, 0.82
-            dim_c = (180, 50, 255)   # 연보라 (pitcher_p3 색)
-            for r in range(N_ROWS):
-                for c2 in range(N_COLS):
-                    # 슬롯 번호 (5개만)
-                    slot_i = r * N_COLS + c2
-                    if slot_i >= 5:
-                        break
-                    cx1 = px1 + int(pw * c2 / N_COLS)
-                    cx2 = px1 + int(pw * (c2 + 1) / N_COLS)
-                    cy1 = py1 + int(ph2 * r / N_ROWS)
-                    cy2 = py1 + int(ph2 * (r + 1) / N_ROWS)
-                    cw = cx2 - cx1
-                    # 이름/배지 경계선
-                    name_edge = cx1 + int(cw * NAME_W)
-                    badge_edge = cx1 + int(cw * BADGE_X)
-                    cv2.line(img, (name_edge, cy1), (name_edge, cy2), dim_c, 1)
-                    cv2.line(img, (badge_edge, cy1), (badge_edge, cy2), (100, 200, 255), 1)
-                    # 슬롯 경계 (행/열)
-                    cv2.rectangle(img, (cx1, cy1), (cx2, cy2), dim_c, 1)
-                    # 슬롯 번호 라벨
-                    cv2.putText(img, f'P{slot_i+1}', (cx1+3, cy1+13),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.35, dim_c, 1)
 
         # 클릭 포인트
         for key, (rx, ry) in self.click_pts.items():
