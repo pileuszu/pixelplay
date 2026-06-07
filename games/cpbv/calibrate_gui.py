@@ -523,10 +523,7 @@ class CalibrationGUI:
                 gf_rgb = cv2.cvtColor(gf, cv2.COLOR_BGR2RGB)
                 pil_gf = _PilImg.fromarray(gf_rgb)
 
-                # Detection: bounding boxes
-                det_results = det_pred([pil_gf])
-                # Recognition: full page text lines
-                rec_results = rec_pred([pil_gf], full_page=True)
+                rec_results = rec_pred([pil_gf], [['ko', 'en']], det_predictor=det_pred)
 
                 detected = []
                 auto_set = []
@@ -687,20 +684,21 @@ class CalibrationGUI:
             print(f"{'─'*52}")
             try:
                 from surya.recognition import RecognitionPredictor
+                from surya.detection import DetectionPredictor
                 from PIL import Image as _PilImg
                 rec_predictor = RecognitionPredictor()
+                det_predictor = DetectionPredictor()
                 regions = self.regions[self.mode]
 
                 def _ocr_crop(crop_bgr):
                     """crop(BGR numpy) → [(text, conf), ...]"""
                     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
                     pil_img = _PilImg.fromarray(rgb)
-                    predictions = rec_predictor([pil_img], full_page=True)
-                    texts = []
-                    for line in predictions[0].text_lines:
-                        if line.confidence > 0.25:
-                            texts.append((line.text, line.confidence))
-                    return texts
+                    predictions = rec_predictor([pil_img], [['ko', 'en']],
+                                               det_predictor=det_predictor)
+                    return [(line.text, line.confidence)
+                            for line in predictions[0].text_lines
+                            if line.confidence > 0.25]
 
                 # ─── P2 모드: pt_pts 픽셀 포인트 기반 감지 ──────────────────
                 if self.mode in ('batter_p2', 'pitcher_p2'):
