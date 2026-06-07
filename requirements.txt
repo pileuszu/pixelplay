@@ -1,0 +1,7 @@
+easyocr
+opencv-python
+numpy
+pillow
+requests
+pyautogui
+pywin32

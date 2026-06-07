@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 데이터 출력 (민감 정보 포함 가능)
+tools/player_data/
+*.json
+!games/**/sample_*.json
+
+# EasyOCR 모델 캐시
+.EasyOCR/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
