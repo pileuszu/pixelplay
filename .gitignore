@@ -28,3 +28,6 @@ Thumbs.db
 
 # 로그
 *.log
+
+venv/
+Repospixelplayvenv/
