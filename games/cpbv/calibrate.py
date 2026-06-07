@@ -23,7 +23,8 @@ from games.cpbv.config_cpbv import (
     WINDOW_LEFT, WINDOW_TOP, WINDOW_RIGHT, WINDOW_BOTTOM,
     WINDOW_WIDTH, WINDOW_HEIGHT,
     STREAM_URL, MOUSE_HOST, MOUSE_PORT, UI,
-    BATTER_P1, PITCHER_P1, BATTER_P3, PITCHER_P3,
+    BATTER_P1, BATTER_P2, BATTER_P3,
+    PITCHER_P1, PITCHER_P2, PITCHER_P3,
     TEAM_TEMPLATES_DIR, TEAMS
 )
 
@@ -115,17 +116,18 @@ def draw_ui_overlay(frame, mode='batter_p1'):
     draw_point(*UI["close"],       "close",        (0, 0, 255))
 
     # 선택된 모드에 따라 OCR 영역 표시
-    regions = BATTER_P1 if mode == 'batter_p1' else PITCHER_P1
-    for key, (rx, ry, rw, rh) in regions.items():
-        draw_region(rx, ry, rw, rh, key, (255, 200, 0))
-
-    if mode == 'batter_p3':
-        for key, (rx, ry, rw, rh) in BATTER_P3.items():
-            draw_region(rx, ry, rw, rh, key, (255, 100, 100))
-
-    if mode == 'pitcher_p3':
-        for key, (rx, ry, rw, rh) in PITCHER_P3.items():
-            draw_region(rx, ry, rw, rh, key, (100, 100, 255))
+    mode_map = {
+        'batter_p1':  (BATTER_P1,  (255, 200,   0)),
+        'batter_p2':  (BATTER_P2,  (255, 150,  50)),
+        'batter_p3':  (BATTER_P3,  (255, 100, 100)),
+        'pitcher_p1': (PITCHER_P1, (  0, 200, 255)),
+        'pitcher_p2': (PITCHER_P2, ( 50, 150, 255)),
+        'pitcher_p3': (PITCHER_P3, (100, 100, 255)),
+    }
+    if mode in mode_map:
+        regions, color = mode_map[mode]
+        for key, (rx, ry, rw, rh) in regions.items():
+            draw_region(rx, ry, rw, rh, key, color)
 
     # 반투명 합성
     result = cv2.addWeighted(overlay, 0.8, frame, 0.2, 0)
@@ -137,14 +139,16 @@ def print_menu():
     print("\n" + "="*50)
     print("  CPBV 좌표 보정 도구")
     print("="*50)
-    print("  [1] 현재 화면 캡처 + 오버레이 저장 (타자 P1)")
-    print("  [2] 현재 화면 캡처 + 오버레이 저장 (투수 P1)")
-    print("  [3] 현재 화면 캡처 + 오버레이 저장 (타자 P3 핫존)")
-    print("  [4] 현재 화면 캡처 + 오버레이 저장 (투수 P3)")
-    print("  [5] 클릭 테스트 - 다음 선수 (next_player)")
-    print("  [6] 클릭 테스트 - 다음 페이지 (next_page)")
-    print("  [7] 클릭 테스트 - 이전 페이지 (prev_page)")
-    print("  [8] 팀 로고 템플릿 저장")
+    print("  [1] 캡처 + 오버레이 - 타자 P1 (능력치)")
+    print("  [2] 캡처 + 오버레이 - 타자 P2 (스킬)")
+    print("  [3] 캡처 + 오버레이 - 타자 P3 (핫콜드존)")
+    print("  [4] 캡처 + 오버레이 - 투수 P1 (능력치)")
+    print("  [5] 캡처 + 오버레이 - 투수 P2 (스킬)")
+    print("  [6] 캡처 + 오버레이 - 투수 P3 (체력바+구종)")
+    print("  [7] 클릭 테스트 - 다음 선수 (next_player)")
+    print("  [8] 클릭 테스트 - 다음 페이지 (next_page)")
+    print("  [9] 클릭 테스트 - 이전 페이지 (prev_page)")
+    print("  [t] 팀 로고 템플릿 저장")
     print("  [q] 종료")
     print("="*50)
 
@@ -192,8 +196,8 @@ def main(args):
             print(f"[+] 저장: {path}")
 
         elif choice == '2':
-            out = draw_ui_overlay(cropped, 'pitcher_p1')
-            path = "games/cpbv/calibration_output/pitcher_p1.png"
+            out = draw_ui_overlay(cropped, 'batter_p2')
+            path = "games/cpbv/calibration_output/batter_p2.png"
             cv2.imwrite(path, out)
             print(f"[+] 저장: {path}")
 
@@ -204,30 +208,42 @@ def main(args):
             print(f"[+] 저장: {path}")
 
         elif choice == '4':
+            out = draw_ui_overlay(cropped, 'pitcher_p1')
+            path = "games/cpbv/calibration_output/pitcher_p1.png"
+            cv2.imwrite(path, out)
+            print(f"[+] 저장: {path}")
+
+        elif choice == '5':
+            out = draw_ui_overlay(cropped, 'pitcher_p2')
+            path = "games/cpbv/calibration_output/pitcher_p2.png"
+            cv2.imwrite(path, out)
+            print(f"[+] 저장: {path}")
+
+        elif choice == '6':
             out = draw_ui_overlay(cropped, 'pitcher_p3')
             path = "games/cpbv/calibration_output/pitcher_p3.png"
             cv2.imwrite(path, out)
             print(f"[+] 저장: {path}")
 
-        elif choice == '5':
+        elif choice == '7':
             if mouse:
                 mouse.click_ratio(*UI["next_player"])
             else:
                 print("[!] --mouse-host 필요")
 
-        elif choice == '6':
+        elif choice == '8':
             if mouse:
                 mouse.click_ratio(*UI["next_page"])
             else:
                 print("[!] --mouse-host 필요")
 
-        elif choice == '7':
+        elif choice == '9':
             if mouse:
                 mouse.click_ratio(*UI["prev_page"])
             else:
                 print("[!] --mouse-host 필요")
 
-        elif choice == '8':
+        elif choice == 't':
             print(f"지원 팀: {', '.join(TEAMS)}")
             team = input("저장할 팀 이름: ").strip()
             if team in TEAMS:
