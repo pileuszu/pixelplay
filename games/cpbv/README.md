@@ -149,14 +149,21 @@ source venv/bin/activate
 
 ### 3. 의존성 설치 (최초 1회)
 
+> **중요**: 반드시 `venv\Scripts\pip.exe`를 사용하세요 (일반 `pip`은 시스템에 설치될 수 있음)
+
 ```bash
-pip install torch==2.3.1 torchvision==0.18.1 --index-url https://download.pytorch.org/whl/cpu
-pip install "numpy<2"
-pip install easyocr opencv-python pillow
+# torch (CPU 버전)
+venv\Scripts\pip.exe install torch==2.3.1 torchvision==0.18.1 --index-url https://download.pytorch.org/whl/cpu
+
+# numpy는 반드시 torch 이후에 1.x 버전으로 고정 (torch 2.3.x는 numpy 2.x 미지원)
+venv\Scripts\pip.exe install "numpy<2"
+
+# 나머지 패키지
+venv\Scripts\pip.exe install "opencv-python>=4.8,<4.9" easyocr pillow
 ```
 
-> **주의**: torch 2.3.x는 NumPy 2.x와 충돌합니다. 반드시 `numpy<2` 버전을 사용하세요.  
-> GPU가 없어도 동작합니다 (CPU 버전으로 설치).
+> **numpy 2.x 충돌 증상**: `easyocr` import 시 `Numpy is not available` 오류  
+> **해결**: `venv\Scripts\pip.exe install "numpy<2"` (일반 pip이 아닌 venv pip 사용)
 
 ### 4. config_cpbv.py 업데이트
 
