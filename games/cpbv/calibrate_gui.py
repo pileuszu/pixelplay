@@ -822,26 +822,51 @@ class CalibrationGUI:
                     self.extract_results[key] = val if texts else ''
                     print(f"  {key:<22} : {display}")
 
-                # ─── overall: 스탯 평균으로 사후 계산 ────────────────────────
+                # ─── 사후 처리: overall 계산 + 숫자 필드 정리 + 요약 ─────────
+                import re as _re
+
+                # overall 스탯 평균 계산
                 stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
                 if stat_keys:
                     vals = []
                     for sk in stat_keys:
-                        v = self.extract_results.get(sk, '')
-                        import re as _re
-                        m = _re.search(r'\d+', v)  # 숫자만 추출 (LaTeX 잔재 무시)
-                        if m:
-                            vals.append(int(m.group()))
-                    if vals:
-                        overall = round(sum(vals) / len(vals))
-                        self.extract_results['overall_area'] = str(overall)
-                        print(f"  {'overall_area':<22} : {overall}  ({' + '.join(str(v) for v in vals)}) / {len(vals)}")
-                    else:
-                        self.extract_results['overall_area'] = ''
-                        print(f"  {'overall_area':<22} : (스탯 미추출)")
+                        m = _re.search(r'\d+', self.extract_results.get(sk, ''))
+                        if m: vals.append(int(m.group()))
+                    self.extract_results['overall_area'] = (
+                        str(round(sum(vals)/len(vals))) if vals else ''
+                    )
+
+                # 숫자 전용 필드 기호 제거
+                NUMERIC_KEYS = {'launch_area','setdeck_area',
+                                'stat_power','stat_endure','stat_contact',
+                                'stat_run','stat_eye','stat_defense',
+                                'stat_speed','stat_control','stat_break',
+                                'stat_stamina','stat_stuff'}
+                for nk in NUMERIC_KEYS:
+                    v = self.extract_results.get(nk, '')
+                    if v:
+                        m = _re.search(r'\d+', v)
+                        self.extract_results[nk] = m.group() if m else ''
+
+                # 종합 요약 출력
+                print(f"\n{'─'*52}")
+                print(f"  {'[ 추출 결과 요약 ]':^48}")
+                print(f"{'─'*52}")
+                SUMMARY_ORDER = [
+                    'name_area','position_area','team_logo',
+                    'setdeck_area','launch_area','overall_area',
+                    'stat_power','stat_endure','stat_contact',
+                    'stat_run','stat_eye','stat_defense',
+                    'stat_speed','stat_control','stat_break',
+                    'stat_stamina','stat_stuff',
+                ]
+                for k in SUMMARY_ORDER:
+                    v = self.extract_results.get(k)
+                    if v is None: continue
+                    print(f"  {k:<22} : {v or '(없음)'}")
+                print(f"{'─'*52}\n")
 
                 self.extract_status = f"완료 ({len(regions)}개 영역)"
-                print(f"{'─'*52}\n")
 
             except ImportError:
                 self.extract_status = 'surya 없음'
