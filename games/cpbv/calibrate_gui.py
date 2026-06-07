@@ -861,19 +861,14 @@ class CalibrationGUI:
                     crop = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
                     texts = _ocr_crop(crop)
                     if texts:
-                        # 중복 텍스트 제거 (surya가 같은 줄을 여러 번 반환하는 경우)
-                        seen, unique = set(), []
-                        for t, c in sorted(texts, key=lambda x: -x[1]):
-                            if t not in seen:
-                                seen.add(t); unique.append((t, c))
-                        texts = unique
-                        val = ' | '.join(t for t, _ in texts)
-                        conf_avg = sum(c for _, c in texts) / len(texts)
-                        display  = f"{val}  ({conf_avg:.0%})"
+                        # 신뢰도 최고 1개만 사용 (모든 필드는 단일 값)
+                        best_text, best_conf = max(texts, key=lambda x: x[1])
+                        val     = best_text
+                        display = f"{val}  ({best_conf:.0%})"
                     else:
-                        val = ''
+                        val     = ''
                         display = '(인식 안 됨)'
-                    self.extract_results[key] = val if texts else ''
+                    self.extract_results[key] = val
                     print(f"  {key:<22} : {display}")
 
                 # ─── 사후 처리: overall 계산 + 숫자 필드 정리 + 요약 ─────────
