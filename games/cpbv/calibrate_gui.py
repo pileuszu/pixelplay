@@ -118,12 +118,14 @@ class MouseClient:
         abs_x = int(WINDOW_LEFT + rx * WINDOW_WIDTH)
         abs_y = int(WINDOW_TOP  + ry * WINDOW_HEIGHT)
         if focus_first:
-            fx = int(WINDOW_LEFT + 0.5 * WINDOW_WIDTH)
-            fy = int(WINDOW_TOP  + 0.1 * WINDOW_HEIGHT)
-            self._send({'action': 'click', 'x': fx, 'y': fy})
-            time.sleep(0.3)
+            # 클릭 대신 win32 API로 창 포커스 (게임 상태 변경 없음)
+            cx = int(WINDOW_LEFT + WINDOW_WIDTH  * 0.5)
+            cy = int(WINDOW_TOP  + WINDOW_HEIGHT * 0.5)
+            self._send({'action': 'focus_window', 'x': cx, 'y': cy})
+            time.sleep(0.15)
         self._send({'action': 'click', 'x': abs_x, 'y': abs_y})
         return abs_x, abs_y
+
 
 
 # ─── 스트림 스레드 (항상 최신 프레임 유지) ─────────────────────
@@ -414,10 +416,10 @@ class CalibrationGUI:
         if not self.mouse:
             print("[!] 마우스 클라이언트 없음")
             return
-        focus = label in ('next_player', 'prev_player')
-        ax, ay = self.mouse.click_ratio(rx, ry, focus_first=focus)
+        ax, ay = self.mouse.click_ratio(rx, ry, focus_first=True)
         self.last_click_label = f"{label} → ({ax},{ay})"
         print(f"  [클릭] {self.last_click_label}")
+
 
 
     # ── OCR 자동 감지 ─────────────────────────────────────────────────
