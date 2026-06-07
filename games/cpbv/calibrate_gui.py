@@ -772,8 +772,12 @@ class CalibrationGUI:
 
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
-                    # 스킵
-                    if key in ('overall_area', 'stamina_bar'):
+                    # overall: 마지막에 계산 (루프 후 처리)
+                    if key == 'overall_area':
+                        continue
+
+                    # stamina_bar 스킵
+                    if key == 'stamina_bar':
                         continue
 
                     # 팀 로고
@@ -807,6 +811,22 @@ class CalibrationGUI:
                         display = '(인식 안 됨)'
                     self.extract_results[key] = val if texts else ''
                     print(f"  {key:<22} : {display}")
+
+                # ─── overall: 스탯 평균으로 사후 계산 ────────────────────────
+                if 'overall_area' in regions:
+                    stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
+                    vals = []
+                    for sk in stat_keys:
+                        v = self.extract_results.get(sk, '')
+                        try: vals.append(int(v))
+                        except: pass
+                    if vals:
+                        overall = round(sum(vals) / len(vals))
+                        self.extract_results['overall_area'] = str(overall)
+                        print(f"  {'overall_area':<22} : {overall}  ({' + '.join(str(v) for v in vals)}) / {len(vals)}")
+                    else:
+                        self.extract_results['overall_area'] = ''
+                        print(f"  {'overall_area':<22} : (스탯 미추출)")
 
                 self.extract_status = f"완료 ({len(regions)}개 영역)"
                 print(f"{'─'*52}\n")
