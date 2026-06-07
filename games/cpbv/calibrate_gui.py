@@ -693,10 +693,13 @@ class CalibrationGUI:
 
                 def _ocr_crop(crop_bgr):
                     """crop(BGR numpy) → [(text, conf), ...]"""
+                    import re as _re
                     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
                     pil_img = _PilImg.fromarray(rgb)
                     results = rec_predictor([pil_img], det_predictor=det_predictor)
-                    return [(line.text, line.confidence)
+                    if not results or not results[0].text_lines:
+                        return []
+                    return [(_re.sub(r'<[^>]+>', '', line.text).strip(), line.confidence)
                             for line in results[0].text_lines
                             if line.confidence > 0.25]
 
