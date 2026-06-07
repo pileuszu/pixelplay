@@ -542,33 +542,27 @@ class CalibrationGUI:
         return None, 0.0, "(인식 실패)"
 
     def _count_potential_bar(self, crop):
-        """잠재력 바에서 총 칸 수 반환 (채워진 칸 + 빈 칸 합계).
-        바를 POTENTIAL_BAR_TOTAL 구간으로 나눠 각 구간에
-        슬롯(밝은 픽셀)이 존재하는지 판단.
-        배경은 어둡고 슬롯(파란/회색 모두)은 배경보다 밝음.
-        """
-        n = POTENTIAL_BAR_TOTAL   # 4
+        """잠재력 바에서 총 칸 수 반환. Returns (count, ratios)"""
+        n = POTENTIAL_BAR_TOTAL
         if crop is None or crop.size == 0:
-            return 0
+            return (0, [])
         h, w = crop.shape[:2]
         if w == 0 or h == 0:
-            return 0
-
-        # 그레이스케일 → 밝은 픽셀 마스크 (슬롯 존재 감지)
+            return (0, [])
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        # 어두운 배경(~30 이하) 제외, 슬롯은 60+ 이상
         _, mask = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
-
         count = 0
+        ratios = []
         seg_w = max(1, w // n)
         for i in range(n):
             x_start = i * seg_w
             x_end   = x_start + seg_w if i < n - 1 else w
             seg = mask[:, x_start:x_end]
             ratio = np.count_nonzero(seg) / (seg.size or 1)
-            if ratio > 0.08:   # 8% 이상 밝은 픽셀 = 슬롯 있음
+            ratios.append(round(ratio, 2))
+            if ratio > 0.08:
                 count += 1
-        return count
+        return (count, ratios)
 
     def _save_team_logo(self, team_name):
         """team_logo 영역 크롭을 team_templates/팀이름.png로 저장"""
