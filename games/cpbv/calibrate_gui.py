@@ -572,7 +572,12 @@ class CalibrationGUI:
 
         for fname in templates:
             team = os.path.splitext(fname)[0]
-            tmpl = cv2.imread(os.path.join(tmpl_dir, fname))
+            try:
+                from PIL import Image as _PilImg
+                pil_tmpl = _PilImg.open(os.path.join(tmpl_dir, fname)).convert('RGB')
+                tmpl = cv2.cvtColor(np.array(pil_tmpl), cv2.COLOR_RGB2BGR)
+            except Exception:
+                continue
             if tmpl is None: continue
 
             th, tw = tmpl.shape[:2]
@@ -671,9 +676,23 @@ class CalibrationGUI:
             print(f"  OCR 추출 테스트 │ {self.mode_label}")
             print(f"{'─'*52}")
             try:
-                import easyocr
-                reader = easyocr.Reader(['ko', 'en'], verbose=False)
+                from surya.recognition import RecognitionPredictor
+                from surya.detection import DetectionPredictor
+                from PIL import Image as _PilImg
+                rec_predictor = RecognitionPredictor()
+                det_predictor = DetectionPredictor()
                 regions = self.regions[self.mode]
+
+                def _ocr_crop(crop_bgr):
+                    """crop(BGR numpy) → [(text, conf), ...]"""
+                    rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+                    pil_img = _PilImg.fromarray(rgb)
+                    predictions = rec_predictor([pil_img], [['ko', 'en']], det_predictor)
+                    texts = []
+                    for pred in predictions[0].text_lines:
+                        if pred.confidence > 0.25:
+                            texts.append((pred.text, pred.confidence))
+                    return texts
 
                 # ─── P2 모드: pt_pts 픽셀 포인트 기반 감지 ──────────────────
                 if self.mode in ('batter_p2', 'pitcher_p2'):
@@ -772,8 +791,7 @@ class CalibrationGUI:
                         scale = max(3, 60 // max(cw,1))
                         crop = cv2.resize(crop, (cw*scale, ch*scale),
                                           interpolation=cv2.INTER_CUBIC)
-                    results = reader.readtext(crop, detail=1)
-                    texts = [(t, c) for _, t, c in results if c > 0.25]
+                    texts = _ocr_crop(crop)
                     if texts:
                         val = ' | '.join(t for t, _ in texts)
                         conf_avg = sum(c for _, c in texts) / len(texts)
@@ -788,8 +806,8 @@ class CalibrationGUI:
                 print(f"{'─'*52}\n")
 
             except ImportError:
-                self.extract_status = 'easyocr 없음'
-                print("[!] pip install easyocr")
+                self.extract_status = 'surya 없음'
+                print("[!] pip install surya-ocr")
             except Exception as e:
                 self.extract_status = f'오류: {e}'
                 print(f"[!] 추출 오류: {e}")
