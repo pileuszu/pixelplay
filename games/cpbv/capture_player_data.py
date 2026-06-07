@@ -1,7 +1,7 @@
 """
 CPBV 선수 카드 데이터 자동 추출기
 - 게임 화면을 MJPEG 스트림으로 수신 (OBS Virtual Camera / NDI)
-- EasyOCR로 한국어 텍스트 추출
+- Surya OCR로 한국어 텍스트 추출
 - 게임 PC 마우스 서버로 자동 네비게이션
 
 사용법:
@@ -9,7 +9,6 @@ CPBV 선수 카드 데이터 자동 추출기
   python capture_player_data.py --mouse-host GAME_PC_TAILSCALE_IP
 """
 import cv2
-import easyocr
 import json
 import time
 import socket
@@ -28,9 +27,12 @@ MOUSE_PORT = 9999
 OUTPUT_DIR = r"D:\Repos\data\tools\player_data"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ─── OCR 초기화 (한국어 + 영어) ────────────────────
-print("[*] EasyOCR 초기화 중... (첫 실행 시 모델 다운로드로 1-2분 소요)")
-reader = easyocr.Reader(['ko', 'en'], gpu=False)
+# ─── OCR 초기화 (Surya) ────────────────────
+print("[*] Surya OCR 초기화 중...")
+from surya.recognition import RecognitionPredictor
+from surya.detection import DetectionPredictor
+_rec_pred = RecognitionPredictor()
+_det_pred = DetectionPredictor()
 print("[*] OCR 준비 완료")
 
 # ─── 마우스 클라이언트 ─────────────────────────────
@@ -95,10 +97,15 @@ def preprocess_for_ocr(img, region=None):
     return gray
 
 def ocr_region(img, region=None):
-    """특정 영역에서 텍스트 추출"""
+    """특정 영역에서 텍스트 추출 (Surya)"""
     proc = preprocess_for_ocr(img, region)
-    results = reader.readtext(proc, detail=0, paragraph=True)
-    return ' '.join(results)
+    # BGR→RGB→PIL
+    rgb = cv2.cvtColor(proc if len(proc.shape)==3 else cv2.cvtColor(proc, cv2.COLOR_GRAY2BGR),
+                       cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(rgb)
+    rec_results = _rec_pred([pil_img], [['ko', 'en']], _det_pred)
+    texts = [line.text for line in rec_results[0].text_lines if line.confidence > 0.25]
+    return ' '.join(texts)
 
 # ─── 선수 데이터 파싱 ──────────────────────────────
 def parse_stat(text, label):

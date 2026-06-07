@@ -511,23 +511,31 @@ class CalibrationGUI:
             self.ocr_status = 'OCR 실행 중...'
             self.ocr_boxes = []
             try:
-                import easyocr
-                reader = easyocr.Reader(['ko', 'en'], verbose=False)
+                from surya.recognition import RecognitionPredictor
+                from surya.detection import DetectionPredictor
+                from PIL import Image as _PilImg
+
+                rec_pred = RecognitionPredictor()
+                det_pred = DetectionPredictor()
+
                 gf = self.frame[STREAM_GAME_Y1:STREAM_GAME_Y2,
                                 STREAM_GAME_X1:STREAM_GAME_X2]
-                results = reader.readtext(gf, detail=1)
+                gf_rgb = cv2.cvtColor(gf, cv2.COLOR_BGR2RGB)
+                pil_gf = _PilImg.fromarray(gf_rgb)
+
+                det_results = det_pred([pil_gf])
+                rec_results = rec_pred([pil_gf], [['ko', 'en']], det_pred)
 
                 detected = []
                 auto_set = []
 
-                for bbox, text, conf in results:
-                    if conf < 0.3: continue
-                    x1g = int(bbox[0][0]); y1g = int(bbox[0][1])
-                    x2g = int(bbox[2][0]); y2g = int(bbox[2][1])
-                    # 스트림 픽셀로 변환 (게임창 오프셋 추가)
+                for line in rec_results[0].text_lines:
+                    if line.confidence < 0.3: continue
+                    b = line.bbox  # [x1,y1,x2,y2]
+                    x1g, y1g, x2g, y2g = int(b[0]), int(b[1]), int(b[2]), int(b[3])
+                    text, conf = line.text, line.confidence
                     detected.append((x1g, y1g, x2g, y2g, text, conf))
 
-                    # 규칙 매칭
                     for keyword, mode_map in OCR_RULES.items():
                         if keyword in text and self.mode in mode_map:
                             key, ox, oy, rw, rh = mode_map[self.mode]
@@ -546,7 +554,7 @@ class CalibrationGUI:
                 print(f"[+] OCR: {self.ocr_status}")
 
             except ImportError:
-                self.ocr_status = 'easyocr 없음 (pip install easyocr)'
+                self.ocr_status = 'surya 없음 (pip install surya-ocr)'
                 print(f"[!] {self.ocr_status}")
             except Exception as e:
                 self.ocr_status = f'오류: {e}'
