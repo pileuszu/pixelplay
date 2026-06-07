@@ -810,6 +810,63 @@ class CalibrationGUI:
                     print(f"{'─'*52}\n")
                     return
 
+                # ─── pitcher_p3: 체력바 + 구종 추출 ─────────────────────────
+                if self.mode == 'pitcher_p3':
+                    import re as _re2
+                    fh, fw = self.frame.shape[:2]
+
+                    # ① 체력바: 픽셀 밝기로 채움 비율 계산
+                    sbar = regions.get('stamina_bar_detail')
+                    if sbar:
+                        bx1, by1, bx2, by2 = rect_px(*sbar)
+                        bx1 = max(0, min(fw-1, bx1)); bx2 = max(0, min(fw, bx2))
+                        by1 = max(0, min(fh-1, by1)); by2 = max(0, min(fh, by2))
+                        bar_crop = self.frame[by1:by2, bx1:bx2]
+                        bh, bw = bar_crop.shape[:2]
+                        if bw > 0:
+                            mid_y = bh // 2
+                            filled = 0
+                            for xi in range(bw):
+                                b, g, r = bar_crop[mid_y, xi]
+                                brightness = (int(r) + int(g) + int(b)) / 3
+                                if brightness > 40:
+                                    filled = xi + 1
+                            ratio = round(filled / bw * 100)
+                            self.extract_results['stamina_bar_detail'] = str(ratio)
+                            print(f"  {'stamina_bar_detail':<22} : {ratio}%  ({filled}/{bw}px)")
+
+                    # ② 구종: pitches_area OCR -> (구종명, 등급) 파싱
+                    parea = regions.get('pitches_area')
+                    if parea:
+                        px1, py1, px2, py2 = rect_px(*parea)
+                        px1 = max(0, min(fw-1, px1)); px2 = max(0, min(fw, px2))
+                        py1 = max(0, min(fh-1, py1)); py2 = max(0, min(fh, py2))
+                        pcrop = self.frame[py1:py2, px1:px2]
+                        ph, pw2 = pcrop.shape[:2]
+                        if pw2 > 0 and ph > 0:
+                            scale = max(2, 300 // max(pw2, 1))
+                            pcrop_up = cv2.resize(pcrop, (pw2*scale, ph*scale),
+                                                   interpolation=cv2.INTER_CUBIC)
+                            raw_texts = _ocr_crop(pcrop_up)
+                            raw = ' '.join(t for t, _ in raw_texts) if raw_texts else ''
+                            # 구종명(한글 2+자) + 등급(S/A/B/C/D + 선택적 +/-) 쌍 추출
+                            pairs = _re2.findall(
+                                r'([\uAC00-\uD7A3]{2,})\s*([SABCDsabcd][+\-]?)',
+                                raw
+                            )
+                            pitches_str = '  '.join(
+                                f"{n}:{g.upper()}" for n, g in pairs
+                            )
+                            self.extract_results['pitches_area'] = pitches_str
+                            if pairs:
+                                print(f"  {'pitches_area':<22} : {pitches_str}")
+                            else:
+                                print(f"  {'pitches_area':<22} : (파싱실패) raw={raw!r}")
+
+                    self.extract_status = "완료 (구종/체력)"
+                    print(f"{'─'*52}\n")
+                    return
+
                 # ─── 일반 모드: 영역 OCR ─────────────────────────────────────
                 for key, region in regions.items():
                     x1, y1, x2, y2 = rect_px(*region)
@@ -824,9 +881,6 @@ class CalibrationGUI:
                     crop = self.frame[y1c:y2c, x1c:x2c]
 
 
-                    # stamina_bar 스킵
-                    if key == 'stamina_bar':
-                        continue
 
                     # 팀 로고
                     if key == 'team_logo':
