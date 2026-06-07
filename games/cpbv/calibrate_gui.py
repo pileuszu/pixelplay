@@ -550,7 +550,8 @@ class CalibrationGUI:
         if w == 0 or h == 0:
             return (0, [])
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        _, mask = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+        # 흰 배경(230+)은 제외, 슬롯(체브론)은 30~210 범위
+        mask = cv2.inRange(gray, 30, 210)
         count = 0
         ratios = []
         seg_w = max(1, w // n)
