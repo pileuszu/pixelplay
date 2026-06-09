@@ -32,22 +32,38 @@ KNOWN_PITCH_NAMES = [
 ]
 
 def _classify_pitch_name(ocr_text):
-    """OCR 결과 → 알려진 구종명으로 분류"""
+    """OCR 결과 → 알려진 구종명으로 분류 (자모 분리 + 첫 글자 가중치 기반)"""
+    import unicodedata
+
     if not ocr_text:
         return ''
-    _sorted_pitches = sorted(KNOWN_PITCH_NAMES, key=len, reverse=True)
-    for pitch in _sorted_pitches:
+
+    # 1) 직접 포함 확인 (긴 이름 먼저 검사: 서클체인지업 > 체인지업 우선)
+    for pitch in sorted(KNOWN_PITCH_NAMES, key=len, reverse=True):
         if pitch in ocr_text:
             return pitch
-    best_name, best_score = '', 0.0
-    for pitch in _sorted_pitches:
-        if ocr_text in pitch and len(ocr_text) >= 2:
-            s = len(ocr_text) / len(pitch)
-            if s > best_score:
-                best_score = s; best_name = pitch
-        s = _SM(None, ocr_text, pitch).ratio()
-        if s > best_score:
-            best_score = s; best_name = pitch
+
+    best_name = ''
+    best_score = 0.0
+
+    # 자모 분리 후 유사도 비교
+    ocr_jamo = unicodedata.normalize('NFD', ocr_text)
+
+    for pitch in KNOWN_PITCH_NAMES:
+        pitch_jamo = unicodedata.normalize('NFD', pitch)
+        
+        # Jamo sequence similarity
+        score = _SM(None, ocr_jamo, pitch_jamo).ratio()
+        
+        # First syllable match bonus (if first characters are identical)
+        if ocr_text[0] == pitch[0]:
+            score += 0.15
+            
+        if score > best_score:
+            best_score = score
+            best_name = pitch
+
+    # 유사도가 너무 낮으면 OCR 원본 반환
     return best_name if best_score >= 0.4 else ocr_text
 
 
@@ -381,6 +397,12 @@ class CalibrationGUI:
         # 로고 저장 모드
         self.logo_save_mode = False
 
+        # 등급 저장 모드
+        self.grade_save_pending = False
+        self.grade_save_region = None
+        self.potential_threshold_min = 50
+        self.potential_threshold_max = 222
+
         # 잠재력 픽셀 포인트 픽커
         # pt_pts[mode][bar_key] = [(rx,ry), (rx,ry), (rx,ry)]  # 슬롯 2,3,4
         self.pt_pts: dict = {}
@@ -406,7 +428,9 @@ class CalibrationGUI:
             if mk in self.regions:
                 self.regions[mk].update({k: tuple(v) for k, v in rgs.items()})
         self.click_pts.update({k: tuple(v) for k, v in data.get('click_pts', {}).items()})
-        print(f"[+] 오버라이드 로드됨")
+        self.potential_threshold_min = data.get('potential_threshold_min', 80)
+        self.potential_threshold_max = data.get('potential_threshold_max', 222)
+        print(f"[+] 오버라이드 로드됨 (임계값 min: {self.potential_threshold_min}, max: {self.potential_threshold_max})")
 
     def _load_pt_pts(self):
         """override JSON의 pt_pts 섹션 로드"""
@@ -425,6 +449,8 @@ class CalibrationGUI:
             'click_pts': {k: list(v) for k, v in self.click_pts.items()},
             'pt_pts':    {m: {bk: [list(p) for p in pts] for bk, pts in bars.items()}
                           for m, bars in self.pt_pts.items()},
+            'potential_threshold_min': self.potential_threshold_min,
+            'potential_threshold_max': self.potential_threshold_max,
         }
         with open(OVERRIDE_PATH, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -569,7 +595,11 @@ class CalibrationGUI:
                 from PIL import Image as _PilImg
 
                 det_pred = DetectionPredictor()
-                rec_pred = RecognitionPredictor()
+                try:
+                    from surya.recognition import FoundationPredictor
+                    rec_pred = RecognitionPredictor(FoundationPredictor())
+                except ImportError:
+                    rec_pred = RecognitionPredictor()
 
                 gf = self.frame[STREAM_GAME_Y1:STREAM_GAME_Y2,
                                 STREAM_GAME_X1:STREAM_GAME_X2]
@@ -737,57 +767,57 @@ class CalibrationGUI:
         except Exception as e:
             print(f"[!] 로고 저장 실패: {e}")
 
-    def _save_grade_templates(self):
-        """pitcher_p3 모드 + pitch*_grade 영역 선택 상태에서 G키:
-        선택된 영역을 크롭 → 등급 입력 → {slot}_{grade}.png 저장.
-        예) pitch3_grade 선택 + 'A' 입력 → pitch3_A.png"""
+    def _save_grade_crop(self, sel_key, grade_val):
+        """등급 이미지 크롭 저장"""
         import os as _os
         save_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                                  'assets', 'grades', 'pitcher')
         _os.makedirs(save_dir, exist_ok=True)
 
+        regions = self.regions.get('pitcher_p3', {})
+        greg = regions.get(sel_key)
+        if greg is None:
+            print(f"[!] 영역 미정의: {sel_key}"); return
+        if self.frame is None:
+            print("[!] R키로 프레임 캡처 먼저"); return
+
+        fh, fw = self.frame.shape[:2]
+        x1, y1, x2, y2 = rect_px(*greg)
+        x1c, y1c = max(0, x1), max(0, y1)
+        x2c, y2c = min(fw, x2), min(fh, y2)
+        if x2c <= x1c or y2c <= y1c:
+            print(f"[!] 영역 범위 오류: {sel_key}"); return
+
+        crop = self.frame[y1c:y2c, x1c:x2c]
+        slot = sel_key.replace('_grade', '')  # 'pitch3'
+
+        fname = f"{slot}_{grade_val}.png"
+        path = _os.path.join(save_dir, fname)
+        try:
+            from PIL import Image as _Img
+            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            _Img.fromarray(rgb).save(path)
+            print(f"[G] 저장 완료: {fname}  ({crop.shape[1]}×{crop.shape[0]}px)")
+            print(f"    경로: {path}")
+        except Exception as e:
+            print(f"[!] 저장 실패: {e}")
+
+    def _save_grade_templates(self):
+        """pitcher_p3 모드 + pitch*_grade 영역 선택 상태에서 G키:
+        등급 입력 대기 상태로 설정"""
         # 선택된 영역이 pitch*_grade인지 확인
         sel_key = None
         if self.selected and self.selected[0] == 'region':
-            sel_key = self.selected[1]  # e.g. 'pitch3_grade'
+            sel_key = self.selected[2]  # 'pitch3_grade' (self.selected[2]가 실제 키)
 
         if sel_key and sel_key.endswith('_grade') and sel_key.startswith('pitch'):
-            # 선택된 특정 등급 영역만 저장
-            regions = self.regions.get('pitcher_p3', {})
-            greg = regions.get(sel_key)
-            if greg is None:
-                print(f"[!] 영역 미정의: {sel_key}"); return
-            if self.frame is None:
-                print("[!] R키로 프레임 캡처 먼저"); return
-
-            fh, fw = self.frame.shape[:2]
-            x1, y1, x2, y2 = rect_px(*greg)
-            x1c, y1c = max(0, x1), max(0, y1)
-            x2c, y2c = min(fw, x2), min(fh, y2)
-            if x2c <= x1c or y2c <= y1c:
-                print(f"[!] 영역 범위 오류: {sel_key}"); return
-
-            crop = self.frame[y1c:y2c, x1c:x2c]
-            slot = sel_key.replace('_grade', '')  # 'pitch3'
-
-            grade_input = input(f"[G] {sel_key} 등급 (A/B/C/D): ").strip().upper()
-            if not grade_input or grade_input not in 'ABCD' or len(grade_input) != 1:
-                print("[!] 취소 또는 잘못된 입력"); return
-
-            fname = f"{slot}_{grade_input}.png"
-            path = _os.path.join(save_dir, fname)
-            try:
-                from PIL import Image as _Img
-                rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                _Img.fromarray(rgb).save(path)
-                print(f"[G] 저장: {fname}  ({crop.shape[1]}×{crop.shape[0]}px)")
-                print(f"    경로: {path}")
-            except Exception as e:
-                print(f"[!] 저장 실패: {e}")
+            self.grade_save_pending = True
+            self.grade_save_region = sel_key
+            print(f"[G] {sel_key} 등급 입력 대기 중. 숫자 1~4(A~D) 또는 키보드 A~D를 누르세요. (ESC: 취소)")
         else:
             # 선택 없음: 사용법 안내
             print("[G] pitcher_p3 모드에서 pitch*_grade 영역을 먼저 선택하세요.")
-            print("    예) pitch1_grade 클릭 → G → 'A' 입력 → pitch1_A.png 저장")
+            print("    예) pitch1_grade 클릭 → G 키 누르기 → 1/2/3/4 또는 A/B/C/D 입력 → 저장")
             print("    5개 영역 × 원하는 등급 수 만큼 반복")
 
 
@@ -809,7 +839,11 @@ class CalibrationGUI:
                 from surya.recognition import RecognitionPredictor
                 from PIL import Image as _PilImg
 
-                rec_predictor = RecognitionPredictor()
+                try:
+                    from surya.recognition import FoundationPredictor
+                    rec_predictor = RecognitionPredictor(FoundationPredictor())
+                except ImportError:
+                    rec_predictor = RecognitionPredictor()
                 regions = self.regions[self.mode]
 
                 def _ocr_crop(crop_bgr):
@@ -851,9 +885,11 @@ class CalibrationGUI:
                             px = max(0, min(fw-1, px))
                             py = max(0, min(fh-1, py))
                             pixel = self.frame[py, px]   # BGR
-                            gray_val = int(pixel[0]) * 0.114 + int(pixel[1]) * 0.587 + int(pixel[2]) * 0.299
-                            # 흰 배경(230+)이 아니면 슬롯 있음
-                            if gray_val < 220:
+                            b, g, r = int(pixel[0]), int(pixel[1]), int(pixel[2])
+                            gray_val = b * 0.114 + g * 0.587 + r * 0.299
+                            color_diff = max(r, g, b) - min(r, g, b)
+                            # 비활성 슬롯(어두운 무채색)과 흰 배경(230+)이 아니며 파란색/민트색 유채색인 경우 슬롯 있음
+                            if color_diff > 30 and self.potential_threshold_min <= gray_val < self.potential_threshold_max:
                                 count += 1
                             else:
                                 break   # 슬롯은 연속적이므로 흰색 나오면 중단
@@ -1013,6 +1049,8 @@ class CalibrationGUI:
 
 
 
+
+
                     # 팀 로고
                     if key == 'team_logo':
                         team, score, warn = self._match_team_logo(crop, mode=self.mode)
@@ -1056,22 +1094,16 @@ class CalibrationGUI:
                 # ─── 사후 처리: overall 계산 + 숫자 필드 정리 + 요약 ─────────
                 import re as _re
 
-                # overall: OCR 추출 우선, 실패 시 스탯 평균 fallback
-                ocr_overall = self.extract_results.get('overall_area', '')
-                m_ov = _re.search(r'\d+', ocr_overall)
-                if m_ov:
-                    self.extract_results['overall_area'] = m_ov.group()
-                else:
-                    # OCR 실패 → 스탯 평균으로 계산
-                    stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
-                    if stat_keys:
-                        vals = []
-                        for sk in stat_keys:
-                            m = _re.search(r'\d+', self.extract_results.get(sk, ''))
-                            if m: vals.append(int(m.group()))
-                        self.extract_results['overall_area'] = (
-                            str(round(sum(vals)/len(vals))) if vals else ''
-                        )
+                # overall: 스탯 6가지 평균으로 직접 계산
+                stat_keys = OVERALL_STAT_KEYS.get(self.mode, [])
+                if stat_keys:
+                    vals = []
+                    for sk in stat_keys:
+                        m = _re.search(r'\d+', self.extract_results.get(sk, ''))
+                        if m: vals.append(int(m.group()))
+                    self.extract_results['overall_area'] = (
+                        str(sum(vals) // 6) if len(vals) == 6 else ''
+                    )
 
                 # 숫자 전용 필드 기호 제거
                 NUMERIC_KEYS = {'launch_area','setdeck_area','overall_area',
@@ -1182,6 +1214,40 @@ class CalibrationGUI:
             cv2.circle(img,(sx,sy),DOT_R,c,-1)
             cv2.circle(img,(sx,sy),DOT_R+2,(0,0,0),1)
 
+        # P2/P3 잠재력 및 핫존 포인트 그리기
+        if self.mode in ('batter_p2', 'pitcher_p2', 'batter_p3'):
+            pts_map = self.pt_pts.get(self.mode, {})
+            text_items = []
+            for bar_key, pts in pts_map.items():
+                for idx, pt in enumerate(pts):
+                    if pt is None: continue
+                    sx = int(STREAM_GAME_X1 + pt[0] * GAME_W)
+                    sy = int(STREAM_GAME_Y1 + pt[1] * GAME_H)
+                    
+                    if self.frame is not None:
+                        fh, fw = self.frame.shape[:2]
+                        px = max(0, min(fw-1, sx))
+                        py = max(0, min(fh-1, sy))
+                        pixel = self.frame[py, px]  # BGR
+                        b, g, r = int(pixel[0]), int(pixel[1]), int(pixel[2])
+                        gray_val = b * 0.114 + g * 0.587 + r * 0.299
+                        color_diff = max(r, g, b) - min(r, g, b)
+                        
+                        if bar_key == 'hotzone_pts':
+                            label = f"#{r:02X}{g:02X}{b:02X}"
+                            c = (b, g, r)
+                        else:
+                            label = f"{gray_val:.0f}"
+                            is_filled = (color_diff > 30 and self.potential_threshold_min <= gray_val < self.potential_threshold_max)
+                            c = (0, 255, 0) if is_filled else (0, 0, 255)
+                    else:
+                        label = f"{idx+2}"
+                        c = (255, 150, 0)
+                        
+                    cv2.circle(img, (sx, sy), 4, c, -1)
+                    cv2.circle(img, (sx, sy), 5, (0, 0, 0), 1)
+                    text_items.append((label, sx + 8, sy - 6, 10, (255, 255, 255), (10, 10, 10)))
+
         # ── 텍스트 오버레이 (PIL) ─────────────────────────────────────
         live_mark = '[라이브] ' if self.live else ''
         ocr_mark  = f'  | {self.ocr_status}' if self.ocr_status else ''
@@ -1263,6 +1329,20 @@ class CalibrationGUI:
                 text_items.append((f'  {num}: {team}{mark}', ox+8, oy+26+i*22, 13,
                                    (80,255,80) if saved else (255,220,80), None))
 
+        # 등급 템플릿 저장 모드 오버레이
+        if self.grade_save_pending:
+            ow, oh = 320, 160
+            ox, oy = (w - ow) // 2, (h - oh) // 2
+            cv2.rectangle(img, (ox-4, oy-4), (ox+ow+4, oy+oh+4), (0,255,150), 2)
+            cv2.rectangle(img, (ox, oy), (ox+ow, oy+oh), (15,15,40), -1)
+            text_items.append((f'등급 템플릿 저장 [{self.grade_save_region}]', ox+8, oy+6, 14, (0,255,150), None))
+            text_items.append(('원하는 등급 키를 누르세요:', ox+8, oy+35, 12, (230,230,230), None))
+            text_items.append(('  A / 1  : A 등급', ox+8, oy+55, 12, (255,220,80), None))
+            text_items.append(('  B / 2  : B 등급', ox+8, oy+75, 12, (255,220,80), None))
+            text_items.append(('  C / 3  : C 등급', ox+8, oy+95, 12, (255,220,80), None))
+            text_items.append(('  D / 4  : D 등급', ox+8, oy+115, 12, (255,220,80), None))
+            text_items.append(('  ESC    : 취소', ox+8, oy+135, 12, (200,100,100), None))
+
         img = draw_text_pil(img, text_items)
         return img
 
@@ -1294,6 +1374,24 @@ class CalibrationGUI:
             if self.live: self.grab_frame()
             cv2.imshow(win, self._draw())
             key = cv2.waitKey(16) & 0xFF
+
+            if key != 255:
+                if self.grade_save_pending:
+                    grade_map = {
+                        ord('1'): 'A', ord('2'): 'B', ord('3'): 'C', ord('4'): 'D',
+                        ord('a'): 'A', ord('b'): 'B', ord('c'): 'C', ord('d'): 'D',
+                        ord('A'): 'A', ord('B'): 'B', ord('C'): 'C', ord('D'): 'D'
+                    }
+                    if key == 27:  # ESC
+                        self.grade_save_pending = False
+                        self.grade_save_region = None
+                        print("[G] 취소됨")
+                    elif key in grade_map:
+                        grade_val = grade_map[key]
+                        self._save_grade_crop(self.grade_save_region, grade_val)
+                        self.grade_save_pending = False
+                        self.grade_save_region = None
+                    continue
 
             if key in (ord('q'), 27):    break
             elif key in (ord('n'), 9):

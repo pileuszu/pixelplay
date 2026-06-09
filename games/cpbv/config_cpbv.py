@@ -4,10 +4,10 @@ get_window_rect.ps1 실행 결과를 여기에 입력하세요.
 """
 
 # ─── 게임 창 절대 좌표 (게임 PC 스크린 기준) ─────────────────────────
-WINDOW_LEFT   = 912
-WINDOW_TOP    = 140
-WINDOW_RIGHT  = 1648
-WINDOW_BOTTOM = 1459
+WINDOW_LEFT   = 1763
+WINDOW_TOP    = 109
+WINDOW_RIGHT  = 2499
+WINDOW_BOTTOM = 1428
 
 WINDOW_WIDTH  = WINDOW_RIGHT  - WINDOW_LEFT   # 736
 WINDOW_HEIGHT = WINDOW_BOTTOM - WINDOW_TOP    # 1319
@@ -54,7 +54,6 @@ UI = {
 # 타자 Page 1
 BATTER_P1 = {
     "name_area":     (0.15, 0.455, 0.65, 0.055),  # 선수명
-    "overall_area":  (0.68, 0.455, 0.10, 0.055),  # 오버롤 숫자
     "position_area": (0.78, 0.455, 0.18, 0.055),  # 포지션 배지 (SS, SP...)
     "team_logo":     (0.04, 0.452, 0.10, 0.060),  # 팀 로고 영역
     "setdeck_area":  (0.55, 0.618, 0.15, 0.050),  # 세트덱 스코어 숫자
@@ -87,7 +86,6 @@ BATTER_P2 = {}  # 영역 없음 - pt_pts 기반 감지
 # 투수 Page 1
 PITCHER_P1 = {
     "name_area":     (0.15, 0.455, 0.65, 0.055),
-    "overall_area":  (0.68, 0.455, 0.10, 0.055),  # 오버롤 숫자
     "position_area": (0.78, 0.455, 0.18, 0.055),
     "team_logo":     (0.04, 0.452, 0.10, 0.060),
     "setdeck_area":  (0.55, 0.618, 0.15, 0.050),

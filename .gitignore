@@ -31,3 +31,6 @@ Thumbs.db
 
 venv/
 Repospixelplayvenv/
+
+# 임시 패치 및 디버깅 스크립트
+games/cpbv/classifier/_*

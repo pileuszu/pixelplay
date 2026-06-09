@@ -31,7 +31,11 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 print("[*] Surya OCR 초기화 중...")
 from surya.recognition import RecognitionPredictor
 from surya.detection import DetectionPredictor
-_rec_pred = RecognitionPredictor()
+try:
+    from surya.recognition import FoundationPredictor
+    _rec_pred = RecognitionPredictor(FoundationPredictor())
+except ImportError:
+    _rec_pred = RecognitionPredictor()
 _det_pred = DetectionPredictor()
 print("[*] OCR 준비 완료")
 

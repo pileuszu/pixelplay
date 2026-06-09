@@ -51,6 +51,11 @@ class MouseClient:
         """창 비율 좌표(0~1)로 클릭"""
         abs_x = int(WINDOW_LEFT + rx * WINDOW_WIDTH)
         abs_y = int(WINDOW_TOP  + ry * WINDOW_HEIGHT)
+        # 먼저 게임 창 중앙 클릭으로 포커스 확보
+        focus_x = int(WINDOW_LEFT + 0.5 * WINDOW_WIDTH)
+        focus_y = int(WINDOW_TOP  + 0.1 * WINDOW_HEIGHT)
+        self._send({'action': 'click', 'x': focus_x, 'y': focus_y})
+        import time; time.sleep(0.3)
         self._send({'action': 'click', 'x': abs_x, 'y': abs_y})
         print(f"  클릭: ({rx:.3f}, {ry:.3f}) → 스크린 ({abs_x}, {abs_y})")
 
@@ -71,19 +76,23 @@ def get_frame(cap):
 
 
 def crop_to_window(frame):
-    """스트림 프레임에서 게임 창 영역만 크롭"""
+    """스트림 프레임에서 게임 창 영역만 크롭
+    
+    OBS가 게임창만 캡처하는 경우 → 크롭 불필요, 그대로 반환
+    OBS가 전체 화면 캡처하는 경우 → 스트림 해상도 기준으로 스케일링 후 크롭
+    """
     fh, fw = frame.shape[:2]
-    # 스트림이 전체 화면을 캡처한다면 게임 창 위치로 크롭
-    # 만약 스트림이 이미 게임 창만 캡처하면 그대로 반환
-    x1 = max(0, WINDOW_LEFT)
-    y1 = max(0, WINDOW_TOP)
-    x2 = min(fw, WINDOW_RIGHT)
-    y2 = min(fh, WINDOW_BOTTOM)
-
-    if x2 > fw or y2 > fh:
-        # 스트림이 게임 창보다 작으면 그대로 사용
+    
+    # 스트림이 게임창 크기(736×1319)보다 작거나 비슷하면 그대로 반환
+    # (OBS가 게임창만 캡처하는 케이스)
+    if fw <= WINDOW_WIDTH * 1.2 and fh <= WINDOW_HEIGHT * 1.2:
         return frame
-    return frame[y1:y2, x1:x2]
+    
+    # 스트림이 전체 화면을 캡처하는 경우: 스케일 보정 후 크롭
+    # 예: 1920×1080 → 1280×720 스트림이면 scale = 1280/1920
+    # 게임 PC 화면 해상도가 필요한데 모르면 일단 그냥 반환
+    # TODO: 실제 게임 PC 해상도 확인 후 보정
+    return frame
 
 
 # ─── 오버레이 그리기 ──────────────────────────────────────────────────
